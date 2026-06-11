@@ -1,0 +1,222 @@
+"""Pure computation helpers shared by all agent nodes.
+
+No I/O, no LLM calls — every function is deterministic and testable in isolation.
+_self_critique() is the only exception: it calls call_llm() but degrades gracefully.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
+
+_UPGRADE_SIGNALS = {
+    "excellent",
+    "perfect",
+    "advanced",
+    "brillant",
+    "parfait",
+    "very good",
+    "expert",
+}
+_DOWNGRADE_SIGNALS = {
+    "confused",
+    "lost",
+    "don't understand",
+    "help",
+    "error",
+    "wrong",
+    "difficile",
+    "perdu",
+    "ne comprends pas",
+    "je comprends pas",
+    "confusion",
+}
+_LEVELS = ("beginner", "intermediate", "advanced")
+
+
+# ── Level assessment ──────────────────────────────────────────────────────────
+
+
+def assess_current_level(level: str, interactions: str, feedback: str) -> str:
+    """Adjust level up/down based on keyword signals in interactions and feedback."""
+    text = (interactions + " " + feedback).lower()
+    up = sum(1 for s in _UPGRADE_SIGNALS if s in text)
+    down = sum(1 for s in _DOWNGRADE_SIGNALS if s in text)
+    idx = _LEVELS.index(level) if level in _LEVELS else 0
+    if up > down and idx < len(_LEVELS) - 1:
+        return _LEVELS[idx + 1]
+    if down > up and idx > 0:
+        return _LEVELS[idx - 1]
+    return level
+
+
+# ── Difficulty detection ──────────────────────────────────────────────────────
+
+
+def detect_difficulties(
+    support: str,
+    interactions: str,
+    feedback: str,
+    objectives: List[str],
+) -> List[str]:
+    """Return up to 5 difficulty signals derived from text and unaddressed objectives."""
+    difficulties: List[str] = []
+    text = (interactions + " " + feedback).lower()
+
+    if "error" in text or "erreur" in text:
+        difficulties.append(f"Errors encountered in {support}")
+    if any(
+        kw in text
+        for kw in ("don't understand", "ne comprends pas", "je comprends pas")
+    ):
+        difficulties.append(f"Comprehension difficulty in {support}")
+    if "why" in text or "pourquoi" in text:
+        difficulties.append(f"Conceptual gaps in {support}")
+    if not interactions.strip():
+        difficulties.append(f"No prior interaction recorded for {support}")
+
+    for obj in objectives[:3]:
+        if obj.lower() not in text:
+            difficulties.append(f"Objective not yet addressed: {obj}")
+
+    return list(dict.fromkeys(difficulties))[:5]
+
+
+def extract_memory_signals(support: str, memories: List[Dict[str, Any]]) -> List[str]:
+    """Extract negative learning signals from past memories."""
+    signals: List[str] = []
+    negative_kws = (
+        "struggled",
+        "failed",
+        "difficulty",
+        "difficile",
+        "erreur",
+        "confusion",
+        "wrong",
+    )
+    for mem in memories:
+        content = mem.get("content", "").lower()
+        if any(kw in content for kw in negative_kws):
+            signals.append(f"Past difficulty: {mem.get('content', '')[:80]}")
+    return signals[:3]
+
+
+# ── Exercise generation ───────────────────────────────────────────────────────
+
+
+def generate_exercises(
+    support: str,
+    level: str,
+    objectives: List[str],
+    count: int = 3,
+) -> List[Dict[str, Any]]:
+    """Return count structured exercises, cycling through objectives."""
+    if not objectives:
+        objectives = [f"{support} fundamentals"]
+    difficulty_map = {"beginner": "easy", "intermediate": "medium", "advanced": "hard"}
+    difficulty = difficulty_map.get(level, "medium")
+
+    exercises: List[Dict[str, Any]] = []
+    for i in range(count):
+        obj = objectives[i % len(objectives)]
+        exercises.append(
+            {
+                "id": i + 1,
+                "type": "explain",
+                "difficulty": difficulty,
+                "question": f"Explain the concept of '{obj}' in {support}.",
+                "hint": f"Think about the definition and a practical example of {obj}.",
+                "answer": f"A clear explanation of {obj} in the context of {support}.",
+                "skill_target": obj,
+            }
+        )
+    return exercises
+
+
+# ── Strategy planning ─────────────────────────────────────────────────────────
+
+
+def plan_learning_strategy(
+    support: str,
+    level: str,
+    difficulties: List[str],
+    feedback: str,
+    memory: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build a prioritised list of learning decisions."""
+    decisions: List[Dict[str, Any]] = []
+    priority = 1
+
+    for diff in difficulties[:3]:
+        decisions.append(
+            {
+                "id": priority,
+                "action": f"Address: {diff}",
+                "rationale": f"Identified difficulty in {support}",
+                "priority": priority,
+            }
+        )
+        priority += 1
+
+    if level == "beginner":
+        decisions.append(
+            {
+                "id": priority,
+                "action": f"Review fundamentals of {support}",
+                "rationale": "Beginner level requires solid foundations",
+                "priority": priority,
+            }
+        )
+    elif level == "advanced":
+        decisions.append(
+            {
+                "id": priority,
+                "action": f"Explore advanced patterns in {support}",
+                "rationale": "Advanced learner ready for complex concepts",
+                "priority": priority,
+            }
+        )
+
+    return decisions[:5]
+
+
+# ── RAG verification ──────────────────────────────────────────────────────────
+
+
+def is_text_supported(text: str, corpus: str, threshold: float = 0.65) -> bool:
+    """Term-overlap check — True if fraction of text terms found in corpus >= threshold."""
+    if not corpus:
+        return False
+    text_terms = set(text.lower().split())
+    corpus_terms = set(corpus.lower().split())
+    if not text_terms:
+        return False
+    overlap = len(text_terms & corpus_terms) / len(text_terms)
+    return overlap >= threshold
+
+
+# ── Self-critique (shared by all agent nodes) ─────────────────────────────────
+
+
+def _self_critique(
+    agent_name: str,
+    output_summary: str,
+    state: Dict[str, Any],
+) -> Optional[str]:
+    """Internal mini-LLM self-critique. Returns critique text or None on failure."""
+    from ai.llm.service import call_llm
+
+    support = state.get("support", "")
+    level = state.get("adjusted_level", state.get("current_level", "beginner"))
+    prompt = (
+        f"Agent {agent_name} a produit : {output_summary}\n"
+        f"Support : {support}, Niveau : {level}\n"
+        f"Cette sortie est-elle cohérente avec l'objectif pédagogique et le niveau ? "
+        f"Réponds en une phrase : OK ou correction nécessaire."
+    )
+    critique = call_llm(prompt, max_tokens=80)
+    if critique:
+        log.debug("Self-critique [%s]: %s", agent_name, critique[:100])
+    return critique
