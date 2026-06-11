@@ -66,6 +66,36 @@ class Settings:
     # Images generation configuration
     IMAGES_ENGINE: str = os.getenv("IMAGES_ENGINE", "")
 
+    # Context assembly configuration
+    CONTEXT_RETRIEVAL_CONFIG: dict = {
+        "filtering": {
+            "relevance_threshold": 0.4,
+            "recency_threshold": 0.3,
+            "max_age_days": 14,
+            "max_context_tokens": 3000,
+        },
+        "memory": {
+            "enabled": True,
+            "top_k": 10,
+            "memory_types": ["episodic", "behavioral", "procedural", "session_summary"],
+        },
+        "rag": {
+            "enabled": True,
+            "top_k_documents": 5,
+            "min_vector_similarity": 0.5,
+            "verification_threshold": 0.65,
+        },
+        "summarization": {
+            "sliding_window_size": 10,
+            "forget_irrelevant": True,
+        },
+        "langchain": {
+            "llm_model": os.getenv("LLM_MODEL", "mistral"),
+            "llm_temperature": 0.7,
+            "orchestrator_use_llm": False,
+        },
+    }
+
     # Summarization trigger configuration
     SUMMARIZATION_CONFIG: dict = {
         "enabled": True,
