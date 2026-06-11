@@ -6,6 +6,7 @@ from .chat import Chat
 from .model import ModelConfig
 from .config import AppConfig
 from .knowledge import KnowledgeBase, KnowledgeFile
+from .memory import Memory, KGConcept, KGRelation, KGUserMastery
 
 __all__ = [
     "User",
@@ -18,4 +19,8 @@ __all__ = [
     "AppConfig",
     "KnowledgeBase",
     "KnowledgeFile",
+    "Memory",
+    "KGConcept",
+    "KGRelation",
+    "KGUserMastery",
 ]

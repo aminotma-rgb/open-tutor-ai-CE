@@ -8,7 +8,7 @@ from data.database import Base
 class ModelConfig(Base):
     __tablename__ = "model_configs"
 
-    id = Column(String(255), primary_key=True)
+    id = Column(String(36), primary_key=True)
     user_id = Column(String(36), nullable=False, index=True)
     base_model_id = Column(String(255), nullable=True)
     name = Column(String(255), nullable=False)
