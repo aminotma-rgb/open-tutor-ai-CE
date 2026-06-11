@@ -41,6 +41,8 @@ tiktoken
 langchain==0.3.7
 langchain-community==0.3.7
 networkx>=3.0
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=0.1.0
 
 fake-useragent==1.5.1
 chromadb==0.6.2
