@@ -1,7 +1,7 @@
 """Chats router — /api/v1/chats/*."""
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from common.exceptions import AuthorizationError, NotFoundError
 from data.database import get_db
 from data.models import User
 from gateway.http.dependencies import get_current_user
+from ai.summarization.service import SummarizationService, extract_exchanges
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -203,21 +204,63 @@ async def archive_all(
 # ── Chat completion tracking (replaces /api/chat/completed) ───────────────────
 
 
+def _run_summarization(
+    user_id: str,
+    chat_id: str,
+    support_id: str,
+    exchanges: list,
+    db: Session,
+) -> None:
+    """Background task — summarize session if threshold reached."""
+    try:
+        summarization_svc = SummarizationService()
+        summarization_svc.summarize_session(
+            user_id=user_id,
+            support_id=support_id,
+            exchanges=exchanges,
+            db=db,
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Background summarization failed for chat %s: %s", chat_id, exc
+        )
+
+
 @router.post("/completed")
 async def chat_completed(
     body: Dict[str, Any],
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: ChatsService = Depends(get_chats_service),
+    db: Session = Depends(get_db),
 ):
-    """Record chat completion for analytics/tracking.
-
-    This keeps completion tracking inside the OpenTutorAI chats namespace.
-    """
-    # Extract chat_id from body
+    """Record chat completion — trigger session summarization if threshold reached."""
     chat_id = body.get("chat_id")
-    if chat_id:
-        # Could update last_active, mark as completed, etc.
-        pass
+    if not chat_id:
+        return {"status": "recorded"}
+
+    try:
+        chat = svc.get(chat_id, current_user.id)
+    except (NotFoundError, AuthorizationError):
+        return {"status": "recorded"}
+
+    exchanges = extract_exchanges(chat.chat)
+    support_id = (chat.meta or {}).get("support_id") or chat_id
+
+    summarization_svc = SummarizationService()
+    if summarization_svc.should_summarize(exchanges):
+        background_tasks.add_task(
+            _run_summarization,
+            user_id=current_user.id,
+            chat_id=chat_id,
+            support_id=support_id,
+            exchanges=exchanges,
+            db=db,
+        )
+        return {"status": "recorded", "summarization": "scheduled"}
+
     return {"status": "recorded"}
 
 

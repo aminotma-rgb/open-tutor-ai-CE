@@ -66,6 +66,14 @@ class Settings:
     # Images generation configuration
     IMAGES_ENGINE: str = os.getenv("IMAGES_ENGINE", "")
 
+    # Summarization trigger configuration
+    SUMMARIZATION_CONFIG: dict = {
+        "enabled": True,
+        "exchanges_per_summary": int(os.getenv("SUMMARY_EXCHANGES_THRESHOLD", "5")),
+        "auto_summarize_token_limit": int(os.getenv("SUMMARY_TOKEN_THRESHOLD", "1200")),
+        "cache_ttl_hours": 24,
+    }
+
     @property
     def cors_origin_regex(self) -> Optional[str]:
         """Return regex pattern if using wildcard CORS.
