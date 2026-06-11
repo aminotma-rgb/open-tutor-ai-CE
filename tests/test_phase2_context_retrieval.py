@@ -56,6 +56,7 @@ def chroma_collection(svc, tmp_path, monkeypatch):
 
 # ── _chunk_text tests ─────────────────────────────────────────────────────────
 
+
 def test_chunk_text_basic(svc):
     """Text longer than chunk_size is split into multiple chunks."""
     words = ["word"] * 600
@@ -81,6 +82,7 @@ def test_chunk_text_empty(svc):
 
 # ── _extract_text tests ───────────────────────────────────────────────────────
 
+
 def test_extract_text_from_txt(svc, txt_file):
     """Text file content is extracted correctly."""
     text = svc._extract_text(txt_file)
@@ -95,6 +97,7 @@ def test_extract_text_missing_file(svc):
 
 
 # ── retrieve_pedagogical_documents tests ─────────────────────────────────────
+
 
 def test_retrieve_returns_list_on_empty_collection(svc, chroma_collection):
     """Querying an empty collection returns an empty list."""
@@ -121,7 +124,10 @@ def test_retrieve_with_documents(svc, chroma_collection):
         metadatas=[{"user_id": "u1"}],
     )
     results = svc.retrieve_pedagogical_documents(
-        user_id="u1", query="programming language", top_k=1, collection_name="test_collection"
+        user_id="u1",
+        query="programming language",
+        top_k=1,
+        collection_name="test_collection",
     )
     assert len(results) == 1
     assert "id" in results[0]
@@ -137,7 +143,10 @@ def test_retrieve_score_between_0_and_1(svc, chroma_collection):
         metadatas=[{"user_id": "u1"}],
     )
     results = svc.retrieve_pedagogical_documents(
-        user_id="u1", query="AI machine learning", top_k=1, collection_name="test_collection"
+        user_id="u1",
+        query="AI machine learning",
+        top_k=1,
+        collection_name="test_collection",
     )
     assert len(results) == 1
     score = results[0]["score"]
@@ -145,6 +154,7 @@ def test_retrieve_score_between_0_and_1(svc, chroma_collection):
 
 
 # ── index_document tests ──────────────────────────────────────────────────────
+
 
 def test_index_document_txt(svc, txt_file, monkeypatch):
     """Indexing a text file returns a positive chunk count."""
@@ -171,13 +181,16 @@ def test_index_document_empty_file(svc, monkeypatch):
         f.write("")
         path = f.name
     try:
-        count = svc.index_document(file_path=path, user_id="u1", collection_name="test_empty")
+        count = svc.index_document(
+            file_path=path, user_id="u1", collection_name="test_empty"
+        )
         assert count == 0
     finally:
         os.unlink(path)
 
 
 # ── retrieve_internal_memory tests ───────────────────────────────────────────
+
 
 def test_retrieve_internal_memory_empty(svc, db):
     """No memories → empty list."""
@@ -187,7 +200,13 @@ def test_retrieve_internal_memory_empty(svc, db):
 
 def test_retrieve_internal_memory_finds_match(svc, db):
     """Memory whose content matches the query is returned."""
-    db.add(Memory(user_id="u1", memory_type="episodic", content="User struggled with JOIN queries"))
+    db.add(
+        Memory(
+            user_id="u1",
+            memory_type="episodic",
+            content="User struggled with JOIN queries",
+        )
+    )
     db.commit()
 
     results = svc.retrieve_internal_memory(user_id="u1", query="JOIN", db=db)
@@ -197,8 +216,16 @@ def test_retrieve_internal_memory_finds_match(svc, db):
 
 def test_retrieve_internal_memory_type_filter(svc, db):
     """memory_types filter restricts results to matching types."""
-    db.add(Memory(user_id="u1", memory_type="episodic", content="episodic content about SQL"))
-    db.add(Memory(user_id="u1", memory_type="behavioral", content="behavioral note about SQL"))
+    db.add(
+        Memory(
+            user_id="u1", memory_type="episodic", content="episodic content about SQL"
+        )
+    )
+    db.add(
+        Memory(
+            user_id="u1", memory_type="behavioral", content="behavioral note about SQL"
+        )
+    )
     db.commit()
 
     results = svc.retrieve_internal_memory(

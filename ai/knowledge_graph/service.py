@@ -91,7 +91,9 @@ class KnowledgeGraphService:
             .first()
         )
         if not row:
-            row = KGUserMastery(user_id=user_id, concept_id=c.id, mastery=0.0, attempts=0)
+            row = KGUserMastery(
+                user_id=user_id, concept_id=c.id, mastery=0.0, attempts=0
+            )
             db.add(row)
 
         row.mastery = min(1.0, row.mastery + delta)
@@ -138,7 +140,9 @@ class KnowledgeGraphService:
         )
         id_to_name = {c.id: c.name for c in concepts}
         for r in relations:
-            G.add_edge(id_to_name[r.source_id], id_to_name[r.target_id], relation=r.relation)
+            G.add_edge(
+                id_to_name[r.source_id], id_to_name[r.target_id], relation=r.relation
+            )
 
         return G
 

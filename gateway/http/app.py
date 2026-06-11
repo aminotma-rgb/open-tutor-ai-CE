@@ -62,6 +62,9 @@ class SPAStaticFiles(StaticFiles):
 async def _lifespan(app: FastAPI):
     try:
         init_database()
+        from ai.tools.tools_registrar import register_otai_tools
+
+        register_otai_tools()
         print(f"{settings.APP_NAME} v{settings.APP_VERSION} started successfully")
         if settings.BUILD_HASH != "dev-build":
             print(f"Build: {settings.BUILD_HASH}")

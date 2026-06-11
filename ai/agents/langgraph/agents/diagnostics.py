@@ -13,6 +13,8 @@ log = logging.getLogger(__name__)
 
 def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
     support = state.get("support", "")
+    user_name = state.get("user_name", "")
+    first_name = user_name.split()[0] if user_name else "apprenant"
     current_level = state.get("current_level", "beginner")
     weak_concepts = list(state.get("weak_concepts") or [])
     memory_context = list(state.get("memory_context") or [])
@@ -44,10 +46,10 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # LLM assessment
     prompt = (
-        f"Tu évalues le niveau d'un apprenant en {support}.\n"
+        f"Tu évalues le niveau de {first_name} en {support}.\n"
         f"Niveau déclaré : {current_level}\n"
         f"Concepts faibles (KG) : {weak_concepts}\n"
-        f"Message apprenant : {interactions[:300]}\n"
+        f"Message de {first_name} : {interactions[:300]}\n"
         f"Mémoires récentes : {[m.get('content', '')[:80] for m in memory_context[:3]]}\n\n"
         f"Évalue le niveau réel (beginner/intermediate/advanced) et liste 3-5 difficultés.\n"
         f'Réponds en JSON : {{"level": "...", "difficulties": [...], "reasoning": "..."}}'
@@ -83,7 +85,7 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "checkpoint": "P1",
                 "message": (
-                    f"Niveau évalué : {adj_level}. "
+                    f"{first_name}, ton niveau a été évalué : {adj_level}. "
                     f"Concepts faibles : {weak_concepts[:3]}. "
                     f"Continuer ? (oui / correction libre)"
                 ),

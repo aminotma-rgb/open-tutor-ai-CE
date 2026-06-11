@@ -10,7 +10,12 @@ class Support(Base):
     __tablename__ = "supports"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     title = Column(String(255), nullable=False)
     short_description = Column(Text, nullable=True)
     subject = Column(String(255), nullable=True)
@@ -66,7 +71,10 @@ class SupportFile(Base):
 
     id = Column(String(36), primary_key=True)
     support_id = Column(
-        String(36), ForeignKey("supports.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("supports.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)

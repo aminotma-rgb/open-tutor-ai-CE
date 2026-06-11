@@ -121,10 +121,11 @@ def generate_exercises(
     exercises: List[Dict[str, Any]] = []
     for i in range(count):
         obj = objectives[i % len(objectives)]
+        ex_type = _detect_exercise_type(support, obj)
         exercises.append(
             {
                 "id": i + 1,
-                "type": "explain",
+                "type": ex_type,
                 "difficulty": difficulty,
                 "question": f"Explain the concept of '{obj}' in {support}.",
                 "hint": f"Think about the definition and a practical example of {obj}.",
@@ -133,6 +134,69 @@ def generate_exercises(
             }
         )
     return exercises
+
+
+_CHART_KEYWORDS = (
+    "parabola",
+    "courbe",
+    "curve",
+    "graphe",
+    "tracer",
+    "trace",
+    "plot",
+    "visualis",
+    "timeline",
+    "gantt",
+)
+_SQL_KEYWORDS = (
+    "sql",
+    "select",
+    "query",
+    "join",
+    "database",
+    "base de données",
+    "table",
+    "requête",
+    "jointure",
+)
+_MATH_KEYWORDS = (
+    "équation",
+    "equation",
+    "calcul",
+    "dérivée",
+    "derivative",
+    "intégrale",
+    "integral",
+    "algèbre",
+    "algebra",
+    "math",
+    "expression",
+)
+_CODE_KEYWORDS = (
+    "python",
+    "code",
+    "program",
+    "fonction",
+    "boucle",
+    "loop",
+    "classe",
+    "class",
+    "algorithm",
+    "algorithme",
+)
+
+
+def _detect_exercise_type(support: str, objective: str) -> str:
+    text = (support + " " + objective).lower()
+    if any(kw in text for kw in _CHART_KEYWORDS):
+        return "chart"
+    if any(kw in text for kw in _SQL_KEYWORDS):
+        return "sql"
+    if any(kw in text for kw in _MATH_KEYWORDS):
+        return "math"
+    if any(kw in text for kw in _CODE_KEYWORDS):
+        return "coding"
+    return "explain"
 
 
 # ── Strategy planning ─────────────────────────────────────────────────────────

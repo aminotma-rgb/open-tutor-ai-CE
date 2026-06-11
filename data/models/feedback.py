@@ -12,7 +12,12 @@ class Feedback(Base):
     __tablename__ = "feedbacks"
 
     id = Column(String(36), primary_key=True)
-    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     response_id = Column(String(255), nullable=True, index=True)
     feedback_type = Column(String(50), nullable=False)  # positive, negative, neutral
     content = Column(Text, nullable=True)

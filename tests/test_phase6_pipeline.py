@@ -325,3 +325,179 @@ def test_reset_mastery_returns_204():
         resp = client.delete("/api/v1/knowledge-graph/python/mastery")
 
     assert resp.status_code == 204
+
+
+# ── POST /adaptive/chat ───────────────────────────────────────────────────────
+
+
+def _chat_payload(**kwargs):
+    base = {
+        "messages": [{"role": "user", "content": "Explique les listes python"}],
+        "support": "python",
+        "current_level": "beginner",
+        "stream": True,
+    }
+    base.update(kwargs)
+    return base
+
+
+def _fake_chat_state():
+    return {
+        "user_id": "user-test-1",
+        "user_name": "Amina Test",
+        "support": "python",
+        "adjusted_level": "beginner",
+        "exercises": [
+            {
+                "id": 1,
+                "type": "coding",
+                "difficulty": "easy",
+                "question": "Créez une liste de 3 éléments.",
+                "hint": "Utilisez []",
+                "skill_target": "listes",
+            }
+        ],
+        "strategy_decisions": [{"action": "Review fundamentals of python"}],
+        "verification": {"verdict": "supported"},
+        "agent_trace": ["orchestrator → started", "exercise → 1 exercise"],
+    }
+
+
+def test_adaptive_chat_streaming_response():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+    ):
+        mock_graph.invoke.return_value = _fake_chat_state()
+        resp = client.post("/api/v1/adaptive/chat", json=_chat_payload())
+
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+
+
+def test_adaptive_chat_sse_format():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+    ):
+        mock_graph.invoke.return_value = _fake_chat_state()
+        resp = client.post("/api/v1/adaptive/chat", json=_chat_payload())
+
+    body = resp.text
+    assert "data:" in body
+    assert "[DONE]" in body
+
+
+def test_adaptive_chat_session_id_header():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+    ):
+        mock_graph.invoke.return_value = _fake_chat_state()
+        resp = client.post(
+            "/api/v1/adaptive/chat",
+            json=_chat_payload(session_id="chat-session-99"),
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("x-adaptive-session-id") == "chat-session-99"
+
+
+def test_adaptive_chat_no_stream_returns_json():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+    ):
+        mock_graph.invoke.return_value = _fake_chat_state()
+        resp = client.post("/api/v1/adaptive/chat", json=_chat_payload(stream=False))
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["object"] == "chat.completion"
+    assert data["choices"][0]["message"]["role"] == "assistant"
+    assert "python" in data["choices"][0]["message"]["content"].lower()
+
+
+def test_adaptive_chat_fallback_when_graph_none():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph", None),
+        patch("gateway.http.routers.adaptive._fallback_response") as mock_fb,
+    ):
+        mock_fb.return_value = {
+            **_fake_chat_state(),
+            "agent_trace": ["[FALLBACK] LangGraph unavailable"],
+        }
+        resp = client.post("/api/v1/adaptive/chat", json=_chat_payload())
+
+    assert resp.status_code == 200
+    mock_fb.assert_called_once()
+
+
+def test_adaptive_chat_auto_detects_support():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+    ):
+        mock_graph.invoke.return_value = _fake_chat_state()
+        resp = client.post(
+            "/api/v1/adaptive/chat",
+            json={
+                "messages": [{"role": "user", "content": "How does sql JOIN work?"}],
+                "stream": False,
+            },
+        )
+
+    assert resp.status_code == 200
+    call_args = mock_graph.invoke.call_args[0][0]
+    assert call_args["support"] == "sql"
+
+
+def test_adaptive_chat_skips_hitl():
+    """human_feedback must be 'yes' so all HITL checkpoints are bypassed."""
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+    ):
+        mock_graph.invoke.return_value = _fake_chat_state()
+        client.post("/api/v1/adaptive/chat", json=_chat_payload())
+
+    call_args = mock_graph.invoke.call_args[0][0]
+    assert call_args["human_feedback"] == "yes"
+
+
+def test_adaptive_chat_graph_error_falls_back():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+        patch("gateway.http.routers.adaptive._fallback_response") as mock_fb,
+    ):
+        mock_graph.invoke.side_effect = RuntimeError("graph exploded")
+        mock_fb.return_value = _fake_chat_state()
+        resp = client.post("/api/v1/adaptive/chat", json=_chat_payload())
+
+    assert resp.status_code == 200
+    mock_fb.assert_called_once()
+
+
+def test_adaptive_chat_both_fail_returns_500():
+    client = _make_client()
+    with (
+        patch("gateway.http.routers.adaptive.ContextManager"),
+        patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+        patch("gateway.http.routers.adaptive._fallback_response") as mock_fb,
+    ):
+        mock_graph.invoke.side_effect = RuntimeError("crash")
+        mock_fb.side_effect = RuntimeError("fallback also crashed")
+        resp = client.post("/api/v1/adaptive/chat", json=_chat_payload())
+
+    assert resp.status_code == 500
+    assert "indisponible" in resp.json()["detail"]

@@ -14,6 +14,8 @@ log = logging.getLogger(__name__)
 
 def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
     user_id = state.get("user_id", "")
+    user_name = state.get("user_name", "")
+    first_name = user_name.split()[0] if user_name else "apprenant"
     support = state.get("support", "")
     exercises = list(state.get("exercises") or [])
     weak_concepts = list(state.get("weak_concepts") or [])
@@ -26,7 +28,9 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
     from ai.agents.helpers import _self_critique
 
     # LLM decides what to memorise
-    memories_to_save = _llm_decide_memories(support, exercises, adj_level, strategy)
+    memories_to_save = _llm_decide_memories(
+        support, exercises, adj_level, strategy, first_name
+    )
 
     # Self-critique
     _self_critique("feedback", f"saving {len(memories_to_save)} memories", state)
@@ -39,7 +43,7 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
         human_feedback = interrupt(
             {
                 "checkpoint": "P3",
-                "message": f"Résumé de session : {summary_text}. Sauvegarder en mémoire ? (oui/non)",
+                "message": f"{first_name}, voici ton résumé de session : {summary_text}. Sauvegarder en mémoire ? (oui/non)",
                 "memories_preview": [
                     m.get("content", "")[:80] for m in memories_to_save[:3]
                 ],
@@ -76,15 +80,19 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _llm_decide_memories(
-    support: str, exercises: list, level: str, strategy: str
+    support: str,
+    exercises: list,
+    level: str,
+    strategy: str,
+    first_name: str = "apprenant",
 ) -> List[Dict[str, Any]]:
     from ai.llm.service import call_llm
 
     prompt = (
-        f"Session d'apprentissage terminée pour : support={support}, niveau={level}\n"
-        f"Stratégie : {strategy[:200]}\n"
+        f"Session d'apprentissage terminée pour {first_name} : support={support}, niveau={level}\n"
+        f"Stratégie suivie par {first_name} : {strategy[:200]}\n"
         f"Exercices générés : {len(exercises)}\n\n"
-        f"Décide quelles informations mémoriser (2-4 entrées, importance : high/medium).\n"
+        f"Décide quelles informations mémoriser sur {first_name} (2-4 entrées, importance : high/medium).\n"
         f"Réponds en JSON :\n"
         f'[{{"type": "behavioral|episodic|procedural", "content": "...", "importance": "high|medium"}}]'
     )

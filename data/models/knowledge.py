@@ -39,7 +39,10 @@ class KnowledgeFile(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     knowledge_id = Column(
-        String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     file_id = Column(String(36), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

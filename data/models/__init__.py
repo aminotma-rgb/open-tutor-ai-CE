@@ -7,6 +7,7 @@ from .model import ModelConfig
 from .config import AppConfig
 from .knowledge import KnowledgeBase, KnowledgeFile
 from .memory import Memory, KGConcept, KGRelation, KGUserMastery
+from .tool import Tool
 
 __all__ = [
     "User",
@@ -23,4 +24,5 @@ __all__ = [
     "KGConcept",
     "KGRelation",
     "KGUserMastery",
+    "Tool",
 ]

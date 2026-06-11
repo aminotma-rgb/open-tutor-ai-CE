@@ -31,6 +31,7 @@ def kg(db):
 
 # ── Model import tests ────────────────────────────────────────────────────────
 
+
 def test_models_importable():
     """All 4 ORM models can be imported without error."""
     assert Memory is not None
@@ -40,6 +41,7 @@ def test_models_importable():
 
 
 # ── KGConcept tests ───────────────────────────────────────────────────────────
+
 
 def test_upsert_concept_creates(db, kg):
     """upsert_concept creates a new concept when it does not exist."""
@@ -60,9 +62,12 @@ def test_upsert_concept_idempotent(db, kg):
 
 # ── KGRelation tests ──────────────────────────────────────────────────────────
 
+
 def test_add_relation(db, kg):
     """add_relation creates a directed edge between two concepts."""
-    edge = kg.add_relation(db, source="SELECT", target="JOIN", relation="requires", support="SQL")
+    edge = kg.add_relation(
+        db, source="SELECT", target="JOIN", relation="requires", support="SQL"
+    )
     assert edge.id is not None
     assert edge.relation == "requires"
     src = db.query(KGConcept).filter_by(name="SELECT", support="SQL").first()
@@ -73,17 +78,24 @@ def test_add_relation(db, kg):
 
 def test_add_relation_idempotent(db, kg):
     """add_relation returns existing edge and does not create duplicates."""
-    e1 = kg.add_relation(db, source="WHERE", target="SELECT", relation="requires", support="SQL")
-    e2 = kg.add_relation(db, source="WHERE", target="SELECT", relation="requires", support="SQL")
+    e1 = kg.add_relation(
+        db, source="WHERE", target="SELECT", relation="requires", support="SQL"
+    )
+    e2 = kg.add_relation(
+        db, source="WHERE", target="SELECT", relation="requires", support="SQL"
+    )
     assert e1.id == e2.id
     assert db.query(KGRelation).count() == 1
 
 
 # ── KGUserMastery tests ───────────────────────────────────────────────────────
 
+
 def test_update_mastery_creates_row(db, kg):
     """update_mastery creates a mastery row when none exists."""
-    row = kg.update_mastery(db, user_id="u1", concept="SELECT", support="SQL", delta=0.2)
+    row = kg.update_mastery(
+        db, user_id="u1", concept="SELECT", support="SQL", delta=0.2
+    )
     assert row.user_id == "u1"
     assert abs(row.mastery - 0.2) < 1e-9
     assert row.attempts == 1
@@ -92,7 +104,9 @@ def test_update_mastery_creates_row(db, kg):
 def test_update_mastery_increments(db, kg):
     """update_mastery increments mastery and attempt count on subsequent calls."""
     kg.update_mastery(db, user_id="u1", concept="SELECT", support="SQL", delta=0.2)
-    row = kg.update_mastery(db, user_id="u1", concept="SELECT", support="SQL", delta=0.3)
+    row = kg.update_mastery(
+        db, user_id="u1", concept="SELECT", support="SQL", delta=0.3
+    )
     assert abs(row.mastery - 0.5) < 1e-9
     assert row.attempts == 2
 
@@ -100,11 +114,14 @@ def test_update_mastery_increments(db, kg):
 def test_mastery_capped_at_1(db, kg):
     """update_mastery never exceeds 1.0."""
     kg.update_mastery(db, user_id="u1", concept="SELECT", support="SQL", delta=0.8)
-    row = kg.update_mastery(db, user_id="u1", concept="SELECT", support="SQL", delta=0.8)
+    row = kg.update_mastery(
+        db, user_id="u1", concept="SELECT", support="SQL", delta=0.8
+    )
     assert row.mastery == 1.0
 
 
 # ── Graph query tests ─────────────────────────────────────────────────────────
+
 
 def test_get_weak_concepts(db, kg):
     """get_weak_concepts returns concepts below the mastery threshold."""
@@ -135,14 +152,19 @@ def test_build_graph_nodes(db, kg):
 
 def test_find_prerequisites(db, kg):
     """find_prerequisites returns concepts that 'require' the given concept."""
-    kg.add_relation(db, source="WHERE", target="SELECT", relation="requires", support="SQL")
-    kg.add_relation(db, source="JOIN", target="SELECT", relation="requires", support="SQL")
+    kg.add_relation(
+        db, source="WHERE", target="SELECT", relation="requires", support="SQL"
+    )
+    kg.add_relation(
+        db, source="JOIN", target="SELECT", relation="requires", support="SQL"
+    )
 
     prereqs = kg.find_prerequisites("SELECT", "SQL", db)
     assert set(prereqs) == {"WHERE", "JOIN"}
 
 
 # ── Memory model test ─────────────────────────────────────────────────────────
+
 
 def test_memory_create(db):
     """Memory rows can be created and retrieved."""

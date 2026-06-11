@@ -11,6 +11,8 @@ log = logging.getLogger(__name__)
 
 def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     support = state.get("support", "")
+    user_name = state.get("user_name", "")
+    first_name = user_name.split()[0] if user_name else "apprenant"
     adj_level = state.get("adjusted_level") or state.get("current_level", "beginner")
     difficulties = list(state.get("difficulties") or [])
     weak_concepts = list(state.get("weak_concepts") or [])
@@ -50,13 +52,13 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     prompt = (
-        f"Génère un plan pédagogique pour : support={support}, niveau={adj_level}.\n"
-        f"Difficultés : {difficulties}\n"
+        f"Génère un plan pédagogique personnalisé pour {first_name} : support={support}, niveau={adj_level}.\n"
+        f"Difficultés de {first_name} : {difficulties}\n"
         f"Concepts faibles : {weak_concepts}\n"
         f"Objectifs : {objectives}\n"
         f"Sources RAG : {rag_summary[:300]}\n"
         f"{verification_note}\n\n"
-        f"Génère 3-5 étapes d'apprentissage prioritaires.\n"
+        f"Génère 3-5 étapes d'apprentissage prioritaires, adaptées au profil de {first_name}.\n"
         f'Réponds en JSON : {{"decisions": [{{"id": 1, "action": "...", "rationale": "...", "priority": 1}}], "reasoning": "..."}}'
     )
     llm_text = call_llm(prompt, max_tokens=400)

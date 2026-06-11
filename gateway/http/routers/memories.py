@@ -75,7 +75,11 @@ def query_memories(
         .all()
     )
     matched = [m.to_dict() for m in all_memories if term in m.content.lower()]
-    return {"documents": [m["content"] for m in matched], "metadatas": matched, "distances": []}
+    return {
+        "documents": [m["content"] for m in matched],
+        "metadatas": matched,
+        "distances": [],
+    }
 
 
 @router.post("/{memory_id}/update")
@@ -85,7 +89,11 @@ def update_memory(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    mem = db.query(Memory).filter(Memory.id == memory_id, Memory.user_id == user.id).first()
+    mem = (
+        db.query(Memory)
+        .filter(Memory.id == memory_id, Memory.user_id == user.id)
+        .first()
+    )
     if not mem:
         raise HTTPException(status_code=404, detail="Memory not found")
     if body.content is not None:
@@ -113,7 +121,11 @@ def delete_memory(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    mem = db.query(Memory).filter(Memory.id == memory_id, Memory.user_id == user.id).first()
+    mem = (
+        db.query(Memory)
+        .filter(Memory.id == memory_id, Memory.user_id == user.id)
+        .first()
+    )
     if not mem:
         raise HTTPException(status_code=404, detail="Memory not found")
     db.delete(mem)

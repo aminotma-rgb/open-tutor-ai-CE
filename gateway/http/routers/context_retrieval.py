@@ -66,7 +66,9 @@ async def index_document(
         os.unlink(tmp_path)
 
     if chunks == 0:
-        raise HTTPException(status_code=422, detail="No text could be extracted from the file")
+        raise HTTPException(
+            status_code=422, detail="No text could be extracted from the file"
+        )
 
     return {"chunks_indexed": chunks, "filename": file.filename}
 

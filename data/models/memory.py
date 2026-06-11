@@ -91,15 +91,23 @@ class KGRelation(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_id = Column(
-        String(36), ForeignKey("opentutorai_kg_concept.id", ondelete="CASCADE"), nullable=False
+        String(36),
+        ForeignKey("opentutorai_kg_concept.id", ondelete="CASCADE"),
+        nullable=False,
     )
     target_id = Column(
-        String(36), ForeignKey("opentutorai_kg_concept.id", ondelete="CASCADE"), nullable=False
+        String(36),
+        ForeignKey("opentutorai_kg_concept.id", ondelete="CASCADE"),
+        nullable=False,
     )
     relation = Column(String(100), nullable=False)  # e.g. "requires", "extends"
 
-    source = relationship("KGConcept", foreign_keys=[source_id], back_populates="relations_from")
-    target = relationship("KGConcept", foreign_keys=[target_id], back_populates="relations_to")
+    source = relationship(
+        "KGConcept", foreign_keys=[source_id], back_populates="relations_from"
+    )
+    target = relationship(
+        "KGConcept", foreign_keys=[target_id], back_populates="relations_to"
+    )
 
     def to_dict(self) -> dict:
         return {
@@ -119,7 +127,9 @@ class KGUserMastery(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), nullable=False, index=True)
     concept_id = Column(
-        String(36), ForeignKey("opentutorai_kg_concept.id", ondelete="CASCADE"), nullable=False
+        String(36),
+        ForeignKey("opentutorai_kg_concept.id", ondelete="CASCADE"),
+        nullable=False,
     )
     mastery = Column(Float, default=0.0, nullable=False)  # 0.0 → 1.0
     attempts = Column(Integer, default=0, nullable=False)

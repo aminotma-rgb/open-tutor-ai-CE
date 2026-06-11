@@ -32,7 +32,9 @@ class ContextRetrievalService:
 
     def get_or_create_collection(self, name: str):
         """Return (or create) a ChromaDB collection with sentence-transformer embeddings."""
-        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+        from chromadb.utils.embedding_functions import (
+            SentenceTransformerEmbeddingFunction,
+        )
 
         client = get_chroma_client()
         ef = SentenceTransformerEmbeddingFunction(model_name=_EMBED_MODEL)
@@ -168,9 +170,7 @@ class ContextRetrievalService:
                 from pypdf import PdfReader
 
                 reader = PdfReader(file_path)
-                return "\n".join(
-                    page.extract_text() or "" for page in reader.pages
-                )
+                return "\n".join(page.extract_text() or "" for page in reader.pages)
             except Exception:
                 return ""
 
