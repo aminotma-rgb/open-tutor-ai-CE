@@ -35,6 +35,8 @@ from .routers import (
     folders as folders_router,
     tasks as tasks_router,
     context_retrieval as context_retrieval_router,
+    adaptive as adaptive_router,
+    knowledge_graph as knowledge_graph_router,
 )
 from gateway.http.api_routes import register_api_routes
 from gateway.realtime.socket import socket_app
@@ -132,6 +134,8 @@ def create_app() -> FastAPI:
     app.include_router(folders_router.router, prefix="/api/v1")
     app.include_router(tasks_router.router, prefix="/api/v1")
     app.include_router(context_retrieval_router.router, prefix="/api/v1")
+    app.include_router(adaptive_router.router, prefix="/api/v1")
+    app.include_router(knowledge_graph_router.router, prefix="/api/v1")
 
     # Socket.IO — mounted at /realtime; client uses path='/realtime/socket.io'
     app.mount("/realtime", socket_app)
