@@ -13,6 +13,10 @@ export type AdaptiveChatBody = {
 	current_level?: string;
 	session_id?: string;
 	learning_objectives?: string[];
+	// System prompt built from support details — enriched by agents before LLM call
+	system_prompt?: string;
+	// Full name of the learner for personalised tutor exchanges
+	user_name?: string;
 };
 
 /**

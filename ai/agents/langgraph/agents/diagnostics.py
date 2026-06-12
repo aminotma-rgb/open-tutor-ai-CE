@@ -24,6 +24,8 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
     agent_trace = list(state.get("agent_trace") or [])
     agent_reasoning = dict(state.get("agent_reasoning") or {})
 
+    session_summary = state.get("session_summary") or ""
+
     from ai.agents.helpers import (
         assess_current_level,
         detect_difficulties,
@@ -32,10 +34,10 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
     from ai.llm.service import call_llm
 
-    # Deterministic baseline
+    # Deterministic baseline — includes concept extraction from past session summaries
     adj_level = assess_current_level(current_level, interactions, human_feedback)
     difficulties = detect_difficulties(
-        support, interactions, human_feedback, objectives
+        support, interactions, human_feedback, objectives, session_summary=session_summary
     )
     difficulties += extract_memory_signals(support, memory_context)
     for wc in weak_concepts[:3]:
@@ -44,15 +46,17 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
             difficulties.append(hint)
     difficulties = list(dict.fromkeys(difficulties))[:5]
 
-    # LLM assessment
+    # LLM assessment — include session summary so the model knows past difficulties
     prompt = (
-        f"Tu évalues le niveau de {first_name} en {support}.\n"
+        f"Tu évalues le niveau de {first_name} en '{support}'.\n"
         f"Niveau déclaré : {current_level}\n"
         f"Concepts faibles (KG) : {weak_concepts}\n"
-        f"Message de {first_name} : {interactions[:300]}\n"
+        f"Dernier message de {first_name} : {interactions[:300]}\n"
+        f"Résumé des sessions précédentes : {session_summary[:400]}\n"
         f"Mémoires récentes : {[m.get('content', '')[:80] for m in memory_context[:3]]}\n\n"
-        f"Évalue le niveau réel (beginner/intermediate/advanced) et liste 3-5 difficultés.\n"
-        f'Réponds en JSON : {{"level": "...", "difficulties": [...], "reasoning": "..."}}'
+        f"Identifie le niveau réel (beginner/intermediate/advanced) et liste 3-5 difficultés spécifiques "
+        f"(cite les concepts précis : division, multiplication, fractions…).\n"
+        f'Réponds UNIQUEMENT en JSON : {{"level": "...", "difficulties": ["...", "..."], "reasoning": "..."}}'
     )
     llm_text = call_llm(prompt, max_tokens=300)
     if llm_text:

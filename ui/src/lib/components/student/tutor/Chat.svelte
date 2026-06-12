@@ -70,6 +70,7 @@
 		updateChatById
 	} from '$lib/apis/chats';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
+	import { generateAdaptiveChatCompletion } from '$lib/apis/adaptive';
 	import { processWeb, processWebSearch, processYoutubeVideo } from '$lib/apis/retrieval';
 	import { createOpenAITextStream } from '$lib/apis/streaming';
 	import { queryMemory } from '$lib/apis/memories';
@@ -826,132 +827,51 @@
 				return null;
 			}
 
-			// Use pre-loaded details if available to avoid a second API call
 			const supportDetails = preloadedDetails || (await getSupportById(token, supportId));
 			if (!supportDetails) {
 				console.error('Failed to fetch support details');
 				return null;
 			}
 
-			// Construct system prompt — base persona from platform config, then session-specific context
 			const _basePrompt = await getTutorSystemPrompt(token);
-			const _fallback = `You are a highly experienced educator, instructional designer, and tutor. You specialize in creating clear, engaging, and progressive step-by-step lessons for any topic and any academic level. You combine best practices in pedagogy (e.g., scaffolding, active recall, formative feedback) with adaptive teaching strategies. Your role is to guide the learner one concept at a time, combining effective teaching strategies, personalized communication style, and the most suitable reasoning method, in a way that is tailored to their needs, level, and learning goals.`;
+			const _fallback = `You are a highly experienced educator, instructional designer, and tutor. You specialize in creating clear, engaging, and progressive step-by-step lessons for any topic and any academic level. You combine best practices in pedagogy (e.g., scaffolding, active recall, formative feedback) with adaptive teaching strategies. Your role is to guide the learner one concept at a time, using effective teaching strategies, personalised communication, and the reasoning method best suited to their needs and level.`;
 			let systemPrompt = (_basePrompt || _fallback).trimEnd() + `\n\n`;
-			systemPrompt += `For this session, you are specializing in ${supportDetails.subject || 'various subjects'}`;
 
-			if (supportDetails.custom_subject) {
-				systemPrompt += `, particularly in ${supportDetails.custom_subject}`;
-			}
-
-			systemPrompt += `.\n\n`;
-
-			// Add directive to acknowledge context in first response
-			systemPrompt += `IMPORTANT INSTRUCTIONS: This is a learning session about ${supportDetails.title}. In your FIRST response, introduce yourself as a tutor for this specific topic and briefly mention what you'll be covering based on the learning objective. Even if the user's first message is generic (like "hello"), you should respond by acknowledging the course topic and learning goals described below.\n\n`;
-
-			// Important note about not asking for information already provided - STRENGTHENED
-			systemPrompt += `CRITICAL INSTRUCTION: DO NOT ask the student about their educational level, background, prior knowledge, or learning objectives. This information has ALREADY been provided below and you must use it directly without asking the student to repeat it. Your first message should immediately begin teaching based on these details without asking any preliminary questions about the student's goals or background.\n\n`;
-
-			// Add explicit first message format
-			systemPrompt += `Begin your first message by saying: "I'm your tutor for ${supportDetails.title}. We'll be working on ${supportDetails.learning_objective || 'this topic'} today." Then immediately start providing relevant content. Do not ask what they want to learn or what their background is.\n\n`;
-
-			// Add title and description
+			// ── Support context ────────────────────────────────────────────────
 			systemPrompt += `TOPIC: ${supportDetails.title}\n`;
+			if (supportDetails.subject)            systemPrompt += `SUBJECT: ${supportDetails.subject}${supportDetails.custom_subject ? ` — ${supportDetails.custom_subject}` : ''}\n`;
+			if (supportDetails.short_description)  systemPrompt += `DESCRIPTION: ${supportDetails.short_description}\n`;
+			if (supportDetails.learning_objective) systemPrompt += `LEARNING OBJECTIVE: ${supportDetails.learning_objective}\n`;
+			if (supportDetails.learning_type)      systemPrompt += `LEARNING TYPE: ${supportDetails.learning_type}\n`;
+			if (supportDetails.level)              systemPrompt += `EDUCATION LEVEL: ${supportDetails.level}\n`;
+			if (supportDetails.content_language)   systemPrompt += `PREFERRED LANGUAGE: ${supportDetails.content_language}\n`;
+			if (supportDetails.keywords?.length)   systemPrompt += `KEY CONCEPTS: ${supportDetails.keywords.join(', ')}\n`;
+			if (supportDetails.estimated_duration) systemPrompt += `ESTIMATED DURATION: ${supportDetails.estimated_duration}\n`;
 
-			if (supportDetails.short_description) {
-				systemPrompt += `DESCRIPTION: ${supportDetails.short_description}\n`;
+			// ── Learner identity — used by the tutor to personalise exchanges ──
+			if ($user?.name) {
+				const firstName = $user.name.split(' ')[0];
+				systemPrompt += `\nLEARNER: ${$user.name}\n`;
+				systemPrompt += `Address the learner by their first name (${firstName}) in your responses.\n`;
 			}
 
-			// Add learning objective
-			if (supportDetails.learning_objective) {
-				systemPrompt += `\nLEARNING OBJECTIVE: ${supportDetails.learning_objective}\n`;
-			}
-
-			// Add learning type
-			if (supportDetails.learning_type) {
-				systemPrompt += `LEARNING TYPE: ${supportDetails.learning_type}\n`;
-
-				// Add specific guidance based on learning type
-				if (supportDetails.learning_type === 'exam') {
-					systemPrompt += `Focus on exam preparation, practice questions, and assessment strategies.\n`;
-				} else if (supportDetails.learning_type === 'course') {
-					systemPrompt += `Focus on comprehensive understanding of course material and concepts.\n`;
-				} else if (supportDetails.learning_type === 'skill') {
-					systemPrompt += `Focus on practical skill-building and application of knowledge.\n`;
-				}
-			}
-
-			// Add education level with stronger emphasis
-			if (supportDetails.level) {
-				systemPrompt += `EDUCATION LEVEL: ${supportDetails.level}\n`;
-
-				// Adjust language and complexity based on level
-				if (supportDetails.level === 'primary') {
-					systemPrompt += `Use simple language and explanations appropriate for young learners.\n`;
-				} else if (supportDetails.level === 'middle') {
-					systemPrompt += `Use moderately complex explanations with clear examples.\n`;
-				} else if (supportDetails.level === 'high') {
-					systemPrompt += `Use more detailed explanations and challenging concepts appropriate for high school students.\n`;
-				} else if (supportDetails.level === 'university') {
-					systemPrompt += `Use advanced concepts and academic language appropriate for university-level education.\n`;
-				}
-
-				// Add explicit note about education level
-				systemPrompt += `NOTE: The student is at the ${supportDetails.level} education level. Do not ask them about their level.\n`;
-			}
-
-			// Add language preference
-			if (supportDetails.content_language) {
-				systemPrompt += `PREFERRED LANGUAGE: ${supportDetails.content_language}\n`;
-				systemPrompt += `Please respond in ${supportDetails.content_language} unless the student asks otherwise.\n`;
-			}
-
-			// Add keywords
-			if (supportDetails.keywords && supportDetails.keywords.length > 0) {
-				systemPrompt += `\nKEY CONCEPTS: ${supportDetails.keywords.join(', ')}\n`;
-			}
-
-			// Check for files and try to enhance context with file content if possible
-			if (supportDetails.files && supportDetails.files.length > 0) {
-				systemPrompt += `\nCOURSE MATERIALS: The student has uploaded ${supportDetails.files.length} file(s) as course materials:\n`;
-
-				// List the files
+			// ── Course materials ───────────────────────────────────────────────
+			if (supportDetails.files?.length) {
+				systemPrompt += `\nCOURSE MATERIALS (${supportDetails.files.length} file(s)):\n`;
 				for (const file of supportDetails.files) {
 					systemPrompt += `- ${file.filename} (${file.file_type || 'unknown type'})\n`;
 				}
-
-				// Add a note about using the content of these materials
-				systemPrompt += `\nWhen answering questions, you should reference and use the content from these materials whenever relevant. The content will be made available through the chat interface. If the student asks about content from these materials, prioritize information from them in your answers.\n`;
-
-				// Try to extract text content from text-based files if possible
-				try {
-					for (const file of supportDetails.files) {
-						if (
-							file.file_type &&
-							(file.file_type.includes('text') ||
-								file.file_type.includes('pdf') ||
-								file.file_type.includes('document'))
-						) {
-							// In a real implementation, you would fetch and process text content from files
-							// For now, we just add a note that the content will be referenced
-							systemPrompt += `\nNote: Content from ${file.filename} will be made available for reference.\n`;
-						}
-					}
-				} catch (fileError) {
-					console.error('Error processing file content:', fileError);
-				}
+				systemPrompt += `Reference these materials when relevant.\n`;
 			}
 
-			// Add estimated duration if available to guide session planning
-			if (supportDetails.estimated_duration) {
-				systemPrompt += `\nESTIMATED DURATION: This learning session is planned for ${supportDetails.estimated_duration}. Please pace your teaching accordingly.\n`;
-			}
+			// ── Behavioural instructions (single block, no repetition) ─────────
+			systemPrompt += `\nINSTRUCTIONS:\n`;
+			systemPrompt += `- Begin teaching immediately. Do not ask questions the student has already answered (level, objectives, background).\n`;
+			systemPrompt += `- On the first message, briefly introduce the topic and what will be covered.\n`;
+			systemPrompt += `- Adapt your explanations, examples, and pace to the learner's real level as the conversation progresses.\n`;
+			systemPrompt += `- Stay focused on the topic above. If the student drifts, gently redirect them.\n`;
+			systemPrompt += `- PEDAGOGICAL CONTINUITY: Before moving to a new concept or section, always ensure the learner has understood the current one. If a difficulty or misunderstanding is identified, address and resolve it first — even if the learner tries to skip it or move on. Never leave a gap unresolved.\n`;
 
-			// Add general instruction
-			systemPrompt += `\nYour goal is to help the student achieve their learning objective by providing clear explanations, examples, analogies, and guided practice appropriate for their level. Adjust your teaching style, complexity, and examples based on their interactions. Be engaging, supportive, and patient throughout the learning process.\n\n`;
-
-			//systemPrompt+= promptData;
-			// Add reminder to stay focused on the topic and not ask redundant questions - STRENGTHENED
-			systemPrompt += `FINAL REMINDER: DO NOT ask the student about information they've already provided such as their educational level, background, or learning goals. Instead, directly begin helping them with their learning objective. Always keep your responses relevant to the topic (${supportDetails.title}) and learning objectives described above. Your role is to provide structured guidance on this specific subject matter. If the student says only "hello" or provides a very brief message, jump straight into teaching the topic - don't waste time with preliminary questions.`;
 			systemPrompt += promptData.prompt;
 			return systemPrompt;
 		} catch (error) {
@@ -2261,6 +2181,107 @@
 			}))
 			.filter((message) => message?.role === 'user' || message?.content?.trim());
 
+		// ── Adaptive routing ──────────────────────────────────────────────────────
+		// When a support is active (TOPIC: marker in the system prompt), route the
+		// request through the agentic pipeline (/api/v1/adaptive/chat) so that
+		// DiagnosticsAgent evaluates the learner's real level and agents enrich the
+		// response before the LLM call. Otherwise fall back to the standard socket flow.
+		const _topicMatch = effectiveSystemContent?.match(/^TOPIC:\s*(.+)$/m);
+		const _activeSupportTitle = _topicMatch ? _topicMatch[1].trim() : null;
+
+		if (_activeSupportTitle) {
+			// Build the conversation history without system messages for the adaptive endpoint
+			const adaptiveMessages = messages
+				.filter((m) => m.role !== 'system')
+				.map((m) => ({
+					role: m.role as 'user' | 'assistant',
+					content: typeof m.content === 'string'
+						? m.content
+						: Array.isArray(m.content)
+							? ((m.content as any[]).find((p: any) => p.type === 'text')?.text ?? '')
+							: String(m.content)
+				}))
+				.filter((m) => m.content);
+
+			let adaptiveRes: Response | null = null;
+			let adaptiveController: AbortController | null = null;
+			try {
+				[adaptiveRes, adaptiveController] = await generateAdaptiveChatCompletion(
+					localStorage.token,
+					{
+						messages: adaptiveMessages,
+						model: model.id,
+						stream,
+						support: _activeSupportTitle,
+						current_level: 'intermediate',
+						session_id: _chatId,
+						system_prompt: effectiveSystemContent,
+						user_name: $user?.name ?? ''
+					}
+				);
+			} catch (error) {
+				toast.error(`${error}`);
+				responseMessage.error = { content: String(error) };
+				responseMessage.done = true;
+				history.messages[responseMessageId] = responseMessage;
+				history.currentId = responseMessageId;
+				await tick();
+				scrollToBottom();
+				return;
+			}
+
+			if (!adaptiveRes || !adaptiveRes.body) {
+				responseMessage.error = { content: 'Adaptive endpoint unavailable' };
+				responseMessage.done = true;
+				history.messages[responseMessageId] = responseMessage;
+				await tick();
+				return;
+			}
+
+			const textStream = await createOpenAITextStream(adaptiveRes.body, false);
+			for await (const update of textStream) {
+				if (update.error) {
+					responseMessage.error = { content: update.error?.message ?? 'Streaming error' };
+					responseMessage.done = true;
+					history.messages[responseMessageId] = responseMessage;
+					await chatCompletedHandler(_chatId, model.id, responseMessageId, createMessagesList(history, responseMessageId));
+					break;
+				}
+				if (update.done) {
+					responseMessage.done = true;
+					history.messages[responseMessageId] = responseMessage;
+					if ($settings.responseAutoCopy) copyToClipboard(responseMessage.content);
+					const lastPart = getMessageContentParts(responseMessage.content, $config?.audio?.tts?.split_on ?? 'punctuation')?.at(-1) ?? '';
+					if (lastPart) {
+						eventTarget.dispatchEvent(new CustomEvent('chat', { detail: { id: responseMessageId, content: lastPart } }));
+					}
+					eventTarget.dispatchEvent(new CustomEvent('chat:finish', { detail: { id: responseMessageId, content: responseMessage.content } }));
+					if (responseMessage.content && avatarActive) {
+						currentAvatarMessage = responseMessage.content;
+						avatarSpeaking = true;
+					}
+					await chatCompletedHandler(_chatId, model.id, responseMessageId, createMessagesList(history, responseMessageId));
+					break;
+				}
+				if (update.value) {
+					responseMessage.content += update.value;
+					history.messages[responseMessageId] = responseMessage;
+					if (navigator.vibrate && ($settings?.hapticFeedback ?? false)) navigator.vibrate(5);
+					const parts = getMessageContentParts(responseMessage.content, $config?.audio?.tts?.split_on ?? 'punctuation');
+					parts.pop();
+					if (parts.length > 0 && parts.at(-1) !== responseMessage.lastSentence) {
+						responseMessage.lastSentence = parts.at(-1);
+						eventTarget.dispatchEvent(new CustomEvent('chat', { detail: { id: responseMessageId, content: parts.at(-1) } }));
+					}
+					if (autoScroll) scrollToBottom();
+				}
+			}
+			await tick();
+			scrollToBottom();
+			return;
+		}
+
+		// ── Standard socket flow (no active support) ───────────────────────────
 		const res = await generateOpenAIChatCompletion(
 			localStorage.token,
 			{
@@ -2284,9 +2305,6 @@
 				files: (files?.length ?? 0) > 0 ? files : undefined,
 				tool_ids: selectedToolIds.length > 0 ? selectedToolIds : undefined,
 
-				// Include the avatar personality type in requests when avatar mode is active
-				// This tells the Gemini API which personality traits to adopt in its responses
-				// Naming convention: "The Scholar" becomes just "scholar" (removes "the " prefix)
 				...(avatarActive && ($settings as any)?.selectedAvatarId
 					? {
 							avatar_type: ($settings as any).selectedAvatarId.toLowerCase().replace(/^the\s+/i, '')

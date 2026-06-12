@@ -60,26 +60,56 @@ def detect_difficulties(
     interactions: str,
     feedback: str,
     objectives: List[str],
+    session_summary: str = "",
 ) -> List[str]:
-    """Return up to 5 difficulty signals derived from text and unaddressed objectives."""
+    """Return up to 5 difficulty signals from the last message and past session summaries."""
+    import re
+
     difficulties: List[str] = []
     text = (interactions + " " + feedback).lower()
 
+    # Generic signals in last user message
     if "error" in text or "erreur" in text:
-        difficulties.append(f"Errors encountered in {support}")
+        difficulties.append(f"Erreurs rencontrées en {support}")
     if any(
         kw in text
-        for kw in ("don't understand", "ne comprends pas", "je comprends pas")
+        for kw in ("don't understand", "ne comprends pas", "je comprends pas", "je ne comprends pas")
     ):
-        difficulties.append(f"Comprehension difficulty in {support}")
+        difficulties.append(f"Difficulté de compréhension en {support}")
     if "why" in text or "pourquoi" in text:
-        difficulties.append(f"Conceptual gaps in {support}")
+        difficulties.append(f"Lacunes conceptuelles en {support}")
     if not interactions.strip():
-        difficulties.append(f"No prior interaction recorded for {support}")
+        difficulties.append(f"Aucune interaction récente en {support}")
+
+    # Concept-specific difficulties extracted from session summary
+    # Handles: "difficultés avec la X", "du mal avec X et Y", "struggled with X and Y"
+    if session_summary:
+        summary_lower = session_summary.lower()
+        # Match the full phrase after difficulty keywords, then split on "et"/"and"
+        _diff_patterns = [
+            r"difficultés?\s+avec\s+(?:la?\s+)?(.+?)(?:\s*[.\n]|$)",
+            r"difficultés?\s+(?:dans|en|sur)\s+(?:la?\s+)?(.+?)(?:\s*[.\n]|$)",
+            r"du\s+mal\s+avec\s+(?:la?\s+)?(.+?)(?:\s*[.\n]|$)",
+            r"struggled?\s+with\s+(.+?)(?:\s*[.,\n]|$)",
+            r"a\s+(?:eu|rencontré)\s+des\s+difficultés?\s+(?:avec\s+)?(?:la?\s+)?(.+?)(?:\s*[.\n]|$)",
+        ]
+        for pattern in _diff_patterns:
+            for m in re.finditer(pattern, summary_lower):
+                raw = m.group(1).strip()
+                # Split on "et" / "and" / "," to get individual concepts
+                parts = re.split(r"\s+et\s+|\s+and\s+|,\s*", raw)
+                for part in parts:
+                    concept = part.strip().strip(".,").strip()
+                    # Remove article prefixes (la, le, les, l')
+                    concept = re.sub(r"^l[ae]s?\s+|^l'", "", concept).strip()
+                    if concept and 2 < len(concept) < 50:
+                        hint = f"Difficulté identifiée : {concept}"
+                        if hint not in difficulties:
+                            difficulties.append(hint)
 
     for obj in objectives[:3]:
         if obj.lower() not in text:
-            difficulties.append(f"Objective not yet addressed: {obj}")
+            difficulties.append(f"Objectif non encore abordé : {obj}")
 
     return list(dict.fromkeys(difficulties))[:5]
 

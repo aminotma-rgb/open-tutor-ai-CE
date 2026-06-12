@@ -28,6 +28,17 @@ def call_llm(
     return call_llm_sync(prompt, model=model, max_tokens=max_tokens)
 
 
+def call_llm_with_messages(
+    messages: list,
+    model: Optional[str] = None,
+    max_tokens: int = 800,
+) -> Optional[str]:
+    """Multi-turn messages call. Passes system + user/assistant roles to the provider."""
+    from ai.llm.transports.httpx_transport import call_llm_with_messages as _call
+
+    return _call(messages, model=model, max_tokens=max_tokens)
+
+
 def get_langchain_llm(model: Optional[str] = None):
     """Return a LangChain-compatible LLM for use with create_react_agent."""
     from ai.llm.transports.httpx_transport import get_langchain_llm as _get

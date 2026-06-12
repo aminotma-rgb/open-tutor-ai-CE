@@ -11,8 +11,10 @@ import os
 
 log = logging.getLogger(__name__)
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _CHECKPOINT_DB = os.getenv(
-    "LANGGRAPH_CHECKPOINT_DB", "data/langgraph_checkpoints.sqlite"
+    "LANGGRAPH_CHECKPOINT_DB",
+    os.path.join(_PROJECT_ROOT, "data", "langgraph_checkpoints.sqlite"),
 )
 
 
@@ -75,9 +77,12 @@ def build_graph(use_checkpointer: bool = True):
     checkpointer = None
     if use_checkpointer:
         try:
+            import sqlite3
             from langgraph.checkpoint.sqlite import SqliteSaver
 
-            checkpointer = SqliteSaver.from_conn_string(_CHECKPOINT_DB)
+            # from_conn_string() returns a context manager — use a raw connection instead
+            _conn = sqlite3.connect(_CHECKPOINT_DB, check_same_thread=False)
+            checkpointer = SqliteSaver(_conn)
             log.debug("SqliteSaver checkpointer at %s", _CHECKPOINT_DB)
         except Exception as exc:
             log.warning("SqliteSaver unavailable, falling back to MemorySaver: %s", exc)

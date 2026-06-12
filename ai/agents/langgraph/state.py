@@ -20,6 +20,8 @@ class TutorGraphState(TypedDict, total=False):
     # ── From ContextManager (Phase 4) ────────────────────────────────────────
     rag_docs: List[Dict[str, Any]]
     session_summary: str
+    # System prompt built from support details in the frontend — enriched by agents before LLM call
+    system_prompt: str
 
     # ── Agent outputs ─────────────────────────────────────────────────────────
     memory_context: List[Dict[str, Any]]

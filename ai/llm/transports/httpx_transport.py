@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 
@@ -63,6 +63,71 @@ def call_llm_sync(
                 return text
         except Exception as exc:
             log.debug("OpenAI-compatible call failed (%s): %s", url, exc)
+
+    return None
+
+
+def call_llm_with_messages(
+    messages: List[dict],
+    model: Optional[str] = None,
+    max_tokens: int = 800,
+    timeout: float = 60.0,
+) -> Optional[str]:
+    """Multi-turn messages call (system + user/assistant roles).
+
+    Ollama: maps system role to the dedicated `system` field of /api/generate.
+    OpenAI-compatible: passes the messages array directly to /chat/completions.
+    Returns text or None on any failure.
+    """
+    model = model or _DEFAULT_MODEL
+
+    for url in _ollama_urls():
+        try:
+            system = next(
+                (m["content"] for m in messages if m.get("role") == "system"), ""
+            )
+            user = next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+                "",
+            )
+            payload: dict = {"model": model, "prompt": user, "stream": False}
+            if system:
+                payload["system"] = system
+            resp = httpx.post(
+                f"{url.rstrip('/')}/api/generate",
+                json=payload,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            text = resp.json().get("response", "").strip()
+            if text:
+                return text
+        except Exception as exc:
+            log.debug("Ollama messages call failed (%s): %s", url, exc)
+
+    oa_urls = _openai_urls()
+    oa_keys = _openai_keys()
+    for idx, url in enumerate(oa_urls):
+        key = oa_keys[idx] if idx < len(oa_keys) else ""
+        try:
+            resp = httpx.post(
+                f"{url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": model, "messages": messages, "max_tokens": max_tokens},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            text = (
+                resp.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+            if text:
+                return text
+        except Exception as exc:
+            log.debug("OpenAI messages call failed (%s): %s", url, exc)
 
     return None
 
