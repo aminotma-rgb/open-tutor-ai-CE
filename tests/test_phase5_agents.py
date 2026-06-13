@@ -55,7 +55,8 @@ def test_assess_level_unknown_returns_same():
 
 def test_detect_difficulties_error_signal():
     result = detect_difficulties("python", "there was an error", "", [])
-    assert any("error" in d.lower() or "Error" in d for d in result)
+    # helper returns French strings — "erreur" or "error" both acceptable
+    assert any("erreur" in d.lower() or "error" in d.lower() for d in result)
 
 
 def test_detect_difficulties_objective_gap():
@@ -72,7 +73,8 @@ def test_detect_difficulties_max_5():
 
 def test_detect_difficulties_no_interaction():
     result = detect_difficulties("sql", "", "", [])
-    assert any("No prior" in d for d in result)
+    # helper returns French: "Aucune interaction récente en sql"
+    assert any("interaction" in d.lower() or "No prior" in d for d in result)
 
 
 # ── helpers — extract_memory_signals ─────────────────────────────────────────

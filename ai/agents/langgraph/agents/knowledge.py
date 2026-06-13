@@ -22,6 +22,7 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "edge_count": 0,
     }
     weak_concepts: list = []
+    blocked_concepts: list = []
 
     try:
         from data.database import get_db
@@ -32,6 +33,9 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
             kg_svc = KnowledgeGraphService()
             weak = kg_svc.get_weak_concepts(user_id, support, db)
             weak_concepts = [c.name if hasattr(c, "name") else str(c) for c in weak]
+
+            # Blocked = weak AND stuck (attempts >= 5) — require a strategy change
+            blocked_concepts = kg_svc.get_blocked_concepts(user_id, support, db)
 
             try:
                 g = kg_svc.build_graph(user_id, support, db)
@@ -54,12 +58,17 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as exc:
         log.warning("KnowledgeAgent failed: %s", exc)
 
-    agent_trace.append(f"knowledge → {len(weak_concepts)} weak concepts")
-    agent_reasoning["knowledge"] = f"[deterministic] {len(weak_concepts)} weak concepts"
+    agent_trace.append(
+        f"knowledge → {len(weak_concepts)} weak, {len(blocked_concepts)} blocked concepts"
+    )
+    agent_reasoning["knowledge"] = (
+        f"[deterministic] {len(weak_concepts)} weak, {len(blocked_concepts)} blocked"
+    )
 
     return {
         "knowledge_graph": knowledge_graph,
         "weak_concepts": weak_concepts,
+        "blocked_concepts": blocked_concepts,
         "agent_trace": agent_trace,
         "agent_reasoning": agent_reasoning,
     }

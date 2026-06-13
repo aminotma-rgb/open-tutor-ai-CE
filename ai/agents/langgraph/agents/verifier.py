@@ -11,6 +11,92 @@ from langgraph.types import interrupt
 log = logging.getLogger(__name__)
 
 
+def _verify_learner_answer(
+    user_message: str, rag_docs: list, question_context: str = ""
+) -> Dict[str, Any]:
+    """Verify the learner's answer using Python arithmetic, RAG, then web search.
+
+    question_context: last assistant message — helps the RAG heuristic know what was asked.
+    Returns a dict: correct (bool), correct_answer (str), explanation (str), method (str)
+    Returns {} if no verifiable answer is detected in the message.
+    """
+    import re
+
+    # Normalise operators
+    normalised = (
+        user_message
+        .replace("×", "*").replace("÷", "/")
+        .replace("x", "*").replace("X", "*")
+    )
+
+    # ── Method 1 : Python arithmetic ──────────────────────────────────────────
+    match = re.search(r"([\d\s\+\-\*\/\(\)\.]+)\s*=\s*([\d\.]+)", normalised)
+    if match:
+        expression = match.group(1).strip()
+        learner_str = match.group(2).strip()
+        try:
+            correct_val = eval(expression, {"__builtins__": {}})
+            correct_rounded = (
+                int(correct_val) if correct_val == int(correct_val)
+                else round(correct_val, 4)
+            )
+            is_correct = abs(float(learner_str) - float(correct_rounded)) < 0.01
+            return {
+                "correct": is_correct,
+                "learner_answer": learner_str,
+                "correct_answer": str(correct_rounded),
+                "explanation": (
+                    f"{expression} = {correct_rounded}"
+                    if is_correct
+                    else f"{expression} = {correct_rounded}, pas {learner_str}"
+                ),
+                "method": "python",
+            }
+        except Exception:
+            pass
+
+    # ── Method 2 : RAG document scan ─────────────────────────────────────────
+    if rag_docs:
+        corpus = " ".join(d.get("content", "") for d in rag_docs).lower()
+        # Combine learner answer with question context for richer matching
+        combined = (user_message + " " + question_context).lower()
+        msg_lower = user_message.lower()
+        words = [w for w in re.findall(r"\w+", combined) if len(w) > 3]
+        hits = sum(1 for w in words if w in corpus)
+        if words:
+            supported = hits / len(words) >= 0.4
+            return {
+                "correct": supported,
+                "learner_answer": user_message.strip(),
+                "correct_answer": "",
+                "explanation": (
+                    "Réponse cohérente avec les documents du cours."
+                    if supported
+                    else "Réponse non confirmée par les documents du cours."
+                ),
+                "method": "rag",
+            }
+
+    # ── Method 3 : Web search ─────────────────────────────────────────────────
+    try:
+        from ai.tools.search_web import search_web
+
+        query = f"est-ce que {user_message} est correct ?"
+        result = search_web.invoke({"query": query})
+        if result and "indisponible" not in result:
+            return {
+                "correct": None,  # cannot determine automatically from web snippet
+                "learner_answer": user_message.strip(),
+                "correct_answer": "",
+                "explanation": f"Résultat web : {result[:300]}",
+                "method": "web",
+            }
+    except Exception:
+        pass
+
+    return {}
+
+
 def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
     exercises = list(state.get("exercises") or [])
     strategy = state.get("strategy", "")
@@ -20,6 +106,15 @@ def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
     agent_reasoning = dict(state.get("agent_reasoning") or {})
     n_retries = dict(state.get("n_retries") or {})
     verification_feedback = list(state.get("verification_feedback") or [])
+    answer_history = list(state.get("answer_history") or [])
+
+    # Extract last assistant message to give verifier the question context
+    messages = list(state.get("messages") or [])
+    last_question = ""
+    for m in reversed(messages[:-1]):  # skip last entry (learner's current answer)
+        if m.get("role") == "assistant":
+            last_question = m.get("content", "")[:300]
+            break
 
     from ai.agents.helpers import is_text_supported
     from ai.llm.service import call_llm
@@ -81,9 +176,26 @@ def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
             verification["specific_feedback"]
         )
 
+    # ── Learner answer verification ───────────────────────────────────────────
+    user_message = state.get("user_message", "")
+    learner_answer_verdict = _verify_learner_answer(user_message, rag_docs, last_question)
+    if learner_answer_verdict:
+        method = learner_answer_verdict.get("method", "?")
+        correct = learner_answer_verdict.get("correct")
+        agent_reasoning["verifier_answer"] = (
+            f"[{method}] learner={'correct' if correct else 'wrong' if correct is False else 'uncertain'} "
+            f"— {learner_answer_verdict.get('explanation', '')[:80]}"
+        )
+        # Accumulate verdict into session answer history
+        answer_history = answer_history + [{
+            **learner_answer_verdict,
+            "user_message": user_message[:100],
+        }]
+
     agent_trace.append(
         f"verifier → verdict={verification.get('verdict')} "
-        f"score={verification.get('score', 0.0):.2f}"
+        f"score={verification.get('score', 0.0):.2f} "
+        f"| answer_check={'yes' if learner_answer_verdict else 'n/a'}"
     )
 
     # Human-in-the-Loop P2 — ask learner when items cannot be verified
@@ -105,6 +217,8 @@ def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "verification": verification,
         "verification_feedback": verification_feedback,
+        "learner_answer_verdict": learner_answer_verdict,
+        "answer_history": answer_history,
         "human_feedback": human_feedback,
         "agent_trace": agent_trace,
         "agent_reasoning": agent_reasoning,

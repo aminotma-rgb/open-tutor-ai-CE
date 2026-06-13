@@ -96,7 +96,7 @@ class KnowledgeGraphService:
             )
             db.add(row)
 
-        row.mastery = min(1.0, row.mastery + delta)
+        row.mastery = max(0.0, min(1.0, row.mastery + delta))
         row.attempts += 1
         row.last_seen = datetime.utcnow()
         if last_error is not None:
@@ -169,6 +169,46 @@ class KnowledgeGraphService:
             if score < threshold:
                 weak.append(c.name)
         return weak
+
+    def get_blocked_concepts(
+        self,
+        user_id: str,
+        support: str,
+        db: Session,
+        mastery_threshold: float = 0.4,
+        attempts_threshold: int = 5,
+    ) -> List[dict]:
+        """Return concepts where mastery < threshold AND attempts >= attempts_threshold.
+
+        These are concepts the learner has repeatedly failed — require a strategy
+        change, not just another exercise of the same type.
+        """
+        concepts = db.query(KGConcept).filter(KGConcept.support == support).all()
+        blocked = []
+        for c in concepts:
+            row = (
+                db.query(KGUserMastery)
+                .filter(
+                    KGUserMastery.user_id == user_id,
+                    KGUserMastery.concept_id == c.id,
+                )
+                .first()
+            )
+            if (
+                row
+                and row.mastery < mastery_threshold
+                and row.attempts >= attempts_threshold
+            ):
+                blocked.append(
+                    {
+                        "concept": c.name,
+                        "attempts": row.attempts,
+                        "mastery": round(row.mastery, 3),
+                        "last_error": row.last_error,
+                    }
+                )
+        # Sort by attempts descending — most stuck concept first
+        return sorted(blocked, key=lambda x: x["attempts"], reverse=True)
 
     def find_prerequisites(
         self,

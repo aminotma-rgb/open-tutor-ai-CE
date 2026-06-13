@@ -28,6 +28,7 @@ class TutorGraphState(TypedDict, total=False):
     memory_summary: str
     knowledge_graph: Dict[str, Any]
     weak_concepts: List[str]
+    blocked_concepts: List[Dict[str, Any]]  # {concept, attempts, mastery, last_error}
     adjusted_level: str
     difficulties: List[str]
     strategy: str
@@ -46,3 +47,9 @@ class TutorGraphState(TypedDict, total=False):
     tool_selection_log: List[Dict[str, Any]]  # {agent, tool, rationale, result}
     verification_feedback: List[str]  # Verifier → Planner targeted feedback
     human_feedback: str  # injected via Command(resume=...) at HITL points
+    learner_answer_verdict: Dict[str, Any]  # verifier result on learner's answer
+
+    # ── Conversation & session tracking ───────────────────────────────────────
+    messages: List[Dict[str, str]]  # [{role, content}] full conversation from frontend
+    answer_history: List[Dict[str, Any]]  # verdicts accumulated this session: [{correct, learner_answer, correct_answer, method, user_message}]
+    proposed_exercises_history: List[str]  # skill_targets already proposed — avoids in-session repetition

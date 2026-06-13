@@ -16,6 +16,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     adj_level = state.get("adjusted_level") or state.get("current_level", "beginner")
     difficulties = list(state.get("difficulties") or [])
     weak_concepts = list(state.get("weak_concepts") or [])
+    blocked_concepts = list(state.get("blocked_concepts") or [])
     rag_docs = list(state.get("rag_docs") or [])
     memory_context = list(state.get("memory_context") or [])
     human_feedback = state.get("human_feedback", "")
@@ -51,12 +52,31 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
         else ""
     )
 
+    # Blocked concepts section — injected before the LLM prompt
+    blocked_names = [bc["concept"] for bc in blocked_concepts]
+    blocked_note = ""
+    if blocked_concepts:
+        details = "; ".join(
+            f"{bc['concept']} ({bc['attempts']} tentatives"
+            + (f", erreur : {bc['last_error']}" if bc.get("last_error") else "")
+            + ")"
+            for bc in blocked_concepts[:3]
+        )
+        blocked_note = (
+            f"\nBLOCAGES CHRONIQUES : {details}\n"
+            f"RÈGLE ABSOLUE : Ces concepts doivent être débloqués AVANT d'introduire "
+            f"tout nouveau concept. Propose une approche radicalement différente "
+            f"(analogie, décomposition en micro-étapes, exemple du quotidien).\n"
+        )
+
     prompt = (
         f"Génère un plan pédagogique personnalisé pour {first_name} : support={support}, niveau={adj_level}.\n"
         f"Difficultés de {first_name} : {difficulties}\n"
         f"Concepts faibles : {weak_concepts}\n"
-        f"Objectifs : {objectives}\n"
+        + (f"Concepts bloqués (priorité maximale) : {blocked_names}\n" if blocked_names else "")
+        + f"Objectifs : {objectives}\n"
         f"Sources RAG : {rag_summary[:300]}\n"
+        f"{blocked_note}"
         f"{verification_note}\n\n"
         f"Génère 3-5 étapes d'apprentissage prioritaires, adaptées au profil de {first_name}.\n"
         f'Réponds en JSON : {{"decisions": [{{"id": 1, "action": "...", "rationale": "...", "priority": 1}}], "reasoning": "..."}}'

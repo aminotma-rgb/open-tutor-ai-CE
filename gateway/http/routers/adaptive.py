@@ -193,6 +193,7 @@ class AdaptiveChatRequest(BaseModel):
     stream: bool = True
     support: Optional[str] = None
     current_level: str = "intermediate"
+    language: str = "fr"
     session_id: Optional[str] = None
     learning_objectives: List[str] = Field(default_factory=list)
     # System prompt built from support details in the frontend (topic, objectives, level…)
@@ -243,10 +244,16 @@ def _persist_adjusted_level(
                 if m.memory_metadata.get("support") == support
             ]
             content = f"Niveau évalué : {adjusted_level} pour '{support}'"
+            if matches:
+                # Preserve previously identified difficulties if the current session found none
+                prev_difficulties = matches[0].memory_metadata.get("difficulties") or []
+                merged_difficulties = difficulties[:5] if difficulties else prev_difficulties
+            else:
+                merged_difficulties = difficulties[:5]
             metadata = {
                 "support": support,
                 "adjusted_level": adjusted_level,
-                "difficulties": difficulties[:5],
+                "difficulties": merged_difficulties,
             }
             if matches:
                 # Update the first match, delete any duplicates
@@ -292,9 +299,45 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
     if adjusted_level:
         parts.append(f"EVALUATED LEVEL: {adjusted_level}")
 
+    # ── Blocked concepts (highest priority — chronic failure) ────────────────────
+    blocked_concepts = state.get("blocked_concepts") or []
+    if blocked_concepts:
+        blocked_details = "; ".join(
+            f"{bc['concept']} ({bc['attempts']} tentatives"
+            + (f", dernière erreur : {bc['last_error']}" if bc.get("last_error") else "")
+            + ")"
+            for bc in blocked_concepts[:3]
+        )
+        parts.append(f"BLOCKED CONCEPTS (chronic failure): {blocked_details}")
+        parts.append(
+            "ABSOLUTE RULE — BLOCKED CONCEPTS: The learner has repeatedly failed on the concepts "
+            "listed above across multiple sessions. You MUST NOT introduce any new concept until "
+            "each blocked concept is resolved. Use a completely different teaching approach from "
+            "previous sessions: try a concrete real-life analogy, break the concept into the "
+            "smallest possible sub-steps, or ask the learner to explain their reasoning so you "
+            "can identify exactly where the misunderstanding lies. "
+            "Do NOT repeat the same exercise type that already failed."
+        )
+        if is_first_message:
+            bc0 = blocked_concepts[0]
+            last_err = f" La dernière fois, tu as répondu '{bc0['last_error']}'." if bc0.get("last_error") else ""
+            parts.append(
+                f"FIRST MESSAGE DIRECTIVE (BLOCKED): Open with warm acknowledgement that this concept "
+                f"has been difficult across {bc0['attempts']} sessions.{last_err} "
+                f"Immediately try a brand-new approach on '{bc0['concept']}' — "
+                f"NOT the same exercise type as before."
+            )
+
+    # ── Regular difficulties ──────────────────────────────────────────────────
     difficulties = state.get("difficulties") or []
-    if difficulties:
-        diff_labels = "; ".join(str(d) for d in difficulties[:5])
+    # Filter out blocked signals already shown above to avoid duplication
+    blocked_names = {bc["concept"] for bc in blocked_concepts}
+    non_blocked_difficulties = [
+        d for d in difficulties
+        if not any(name in d for name in blocked_names)
+    ]
+    if non_blocked_difficulties:
+        diff_labels = "; ".join(str(d) for d in non_blocked_difficulties[:5])
         parts.append(f"IDENTIFIED DIFFICULTIES: {diff_labels}")
         parts.append(
             "PEDAGOGICAL RULE: The learner has unresolved difficulties listed above. "
@@ -302,11 +345,10 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
             "If the learner tries to skip or ignore a difficulty, gently but firmly bring them back to it. "
             "Pedagogical continuity is non-negotiable."
         )
-        if is_first_message:
-            # Extract readable concept names (strip "Difficulté identifiée : " prefix if present)
+        if is_first_message and not blocked_concepts:
             concepts = [
                 d.split(":")[-1].strip() if ":" in d else str(d)
-                for d in difficulties[:2]
+                for d in non_blocked_difficulties[:2]
             ]
             parts.append(
                 f"FIRST MESSAGE DIRECTIVE: This is the opening of the session. "
@@ -317,8 +359,9 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
             )
 
     weak_concepts = state.get("weak_concepts") or []
-    if weak_concepts:
-        parts.append(f"CONCEPTS TO REINFORCE: {', '.join(str(c) for c in weak_concepts[:5])}")
+    non_blocked_weak = [c for c in weak_concepts if c not in blocked_names]
+    if non_blocked_weak:
+        parts.append(f"CONCEPTS TO REINFORCE: {', '.join(str(c) for c in non_blocked_weak[:5])}")
 
     memory_summary = state.get("memory_summary") or state.get("session_summary") or ""
     if memory_summary:
@@ -331,6 +374,34 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
             for d in decisions[:3]
         )
         parts.append(f"TEACHING STRATEGY: {actions}")
+
+    # Learner answer verdict from VerifierAgent
+    verdict = state.get("learner_answer_verdict") or {}
+    if verdict:
+        correct = verdict.get("correct")
+        learner_ans = verdict.get("learner_answer", "")
+        correct_ans = verdict.get("correct_answer", "")
+        explanation = verdict.get("explanation", "")
+        method = verdict.get("method", "")
+
+        if correct is True:
+            parts.append(
+                f"ANSWER VERIFICATION [{method}]: The learner's answer '{learner_ans}' is CORRECT. "
+                f"{explanation} — Congratulate them warmly and move on to the next step."
+            )
+        elif correct is False:
+            parts.append(
+                f"ANSWER VERIFICATION [{method}]: The learner's answer '{learner_ans}' is WRONG. "
+                f"Correct answer: {correct_ans}. {explanation}. "
+                f"CRITICAL: Do NOT say 'correct', 'exactement', 'bravo' or any validating phrase. "
+                f"Gently tell the learner their answer is incorrect, explain why, "
+                f"give the correct answer ({correct_ans}), and invite them to try again."
+            )
+        elif correct is None and explanation:
+            parts.append(
+                f"ANSWER VERIFICATION [web]: Context found: {explanation} "
+                f"— Use your judgment to evaluate the learner's answer."
+            )
 
     if not parts:
         return base
@@ -442,9 +513,11 @@ async def adaptive_chat(
         "user_name": user_name,
         "support": support,
         "current_level": body.current_level,
-        "language": "fr",
+        "language": body.language,
         "learning_objectives": body.learning_objectives,
         "user_message": user_message,
+        # Full conversation history — agents use this to see the exchange, not just the last message
+        "messages": [{"role": m.role, "content": m.content} for m in body.messages],
         "rag_docs": rag_docs,
         "session_summary": session_summary,
         # system_prompt from frontend contains support details (topic, objectives, level…)
@@ -455,6 +528,8 @@ async def adaptive_chat(
         "agent_trace": [],
         "agent_reasoning": {},
         "tool_selection_log": [],
+        # answer_history and proposed_exercises_history are NOT reset here —
+        # LangGraph carries them from the previous checkpoint for the same session_id
     }
 
     try:

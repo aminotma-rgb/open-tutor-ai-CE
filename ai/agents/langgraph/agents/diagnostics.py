@@ -17,6 +17,7 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
     first_name = user_name.split()[0] if user_name else "apprenant"
     current_level = state.get("current_level", "beginner")
     weak_concepts = list(state.get("weak_concepts") or [])
+    blocked_concepts = list(state.get("blocked_concepts") or [])
     memory_context = list(state.get("memory_context") or [])
     objectives = list(state.get("learning_objectives") or [])
     interactions = state.get("user_message", "")
@@ -25,6 +26,15 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
     agent_reasoning = dict(state.get("agent_reasoning") or {})
 
     session_summary = state.get("session_summary") or ""
+
+    # Build a compact view of the last 3 exchange pairs from conversation history
+    messages = list(state.get("messages") or [])
+    recent_exchanges = []
+    for m in messages[-8:]:
+        role = m.get("role", "")
+        if role in ("user", "assistant"):
+            recent_exchanges.append(f"[{role}] {m.get('content', '')[:150]}")
+    recent_context = "\n".join(recent_exchanges[-6:])  # at most 3 pairs
 
     from ai.agents.helpers import (
         assess_current_level,
@@ -40,19 +50,41 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
         support, interactions, human_feedback, objectives, session_summary=session_summary
     )
     difficulties += extract_memory_signals(support, memory_context)
+
+    # Blocked concepts (stuck ≥ 5 attempts) go first — highest pedagogical priority
+    for bc in blocked_concepts[:3]:
+        label = (
+            f"Blocage persistant : {bc['concept']} "
+            f"({bc['attempts']} tentatives sans progrès"
+            + (f", dernière erreur : {bc['last_error']}" if bc.get("last_error") else "")
+            + ")"
+        )
+        if label not in difficulties:
+            difficulties.insert(0, label)
+
+    # Regular weak concepts follow
     for wc in weak_concepts[:3]:
         hint = f"Concept faible détecté : {wc}"
         if hint not in difficulties:
             difficulties.append(hint)
+
     difficulties = list(dict.fromkeys(difficulties))[:5]
 
-    # LLM assessment — include session summary so the model knows past difficulties
+    # Blocked concept names for LLM context
+    blocked_names = [bc["concept"] for bc in blocked_concepts]
+
+    # LLM assessment — include session summary, full recent exchange, and blocked signals
     prompt = (
         f"Tu évalues le niveau de {first_name} en '{support}'.\n"
         f"Niveau déclaré : {current_level}\n"
         f"Concepts faibles (KG) : {weak_concepts}\n"
-        f"Dernier message de {first_name} : {interactions[:300]}\n"
-        f"Résumé des sessions précédentes : {session_summary[:400]}\n"
+        + (
+            f"BLOCAGES CHRONIQUES (≥5 tentatives sans progrès) : {blocked_names}\n"
+            if blocked_names else ""
+        )
+        + f"Dernier message de {first_name} : {interactions[:300]}\n"
+        + (f"Échanges récents de la session :\n{recent_context}\n" if recent_context else "")
+        + f"Résumé des sessions précédentes : {session_summary[:400]}\n"
         f"Mémoires récentes : {[m.get('content', '')[:80] for m in memory_context[:3]]}\n\n"
         f"Identifie le niveau réel (beginner/intermediate/advanced) et liste 3-5 difficultés spécifiques "
         f"(cite les concepts précis : division, multiplication, fractions…).\n"

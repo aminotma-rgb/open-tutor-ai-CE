@@ -411,6 +411,10 @@ def test_adaptive_chat_no_stream_returns_json():
     with (
         patch("gateway.http.routers.adaptive.ContextManager"),
         patch("gateway.http.routers.adaptive.tutor_graph") as mock_graph,
+        patch(
+            "gateway.http.routers.adaptive._llm_conversational_response",
+            return_value="Les listes python sont des collections ordonnées.",
+        ),
     ):
         mock_graph.invoke.return_value = _fake_chat_state()
         resp = client.post("/api/v1/adaptive/chat", json=_chat_payload(stream=False))
