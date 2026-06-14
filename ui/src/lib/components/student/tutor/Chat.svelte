@@ -83,7 +83,7 @@
 		stopTask
 	} from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
-	import { getSupportById } from '$lib/apis/supports';
+	import { getSupportById, updateSupportChatId } from '$lib/apis/supports';
 	import { getTutorSystemPrompt } from '$lib/apis/configs';
 
 	import Banner from '$lib/components/common/Banner.svelte';
@@ -2628,13 +2628,18 @@
 				_chatId = chat.id;
 				await chatId.set(_chatId);
 
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
-				currentChatPage.set(1);
-
-				// Clear pending support data now that the chat is linked to the support
+				// Link the new chat back to the support so "Continue Chat" works next time
 				if (supportId) {
+					try {
+						await updateSupportChatId(localStorage.token, supportId, _chatId);
+					} catch (e) {
+						console.error('Failed to link chat to support:', e);
+					}
 					localStorage.removeItem('pendingSupportData');
 				}
+
+				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+				currentChatPage.set(1);
 
 				window.history.replaceState(history.state, '', `/student/c/${_chatId}`);
 

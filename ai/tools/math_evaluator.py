@@ -7,7 +7,15 @@ from langchain_core.tools import tool
 
 @tool
 def math_evaluator(expression: str) -> str:
-    """Evaluate a mathematical expression using sympy (falls back to safe eval)."""
+    """Evaluate a mathematical expression and return the numeric result with LaTeX if possible.
+
+    Use this to verify arithmetic, algebra, or to compute the correct answer for a math exercise.
+    Pass only the expression as a string — no equals sign, no surrounding text.
+
+    Examples:
+      math_evaluator("47 + 38")         → "Result: 85"
+      math_evaluator("x**2 + 2*x + 1") → "Result: (x+1)**2  LaTeX: $(x+1)^{2}$"
+    """
     try:
         from sympy import latex, simplify, sympify
 

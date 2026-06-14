@@ -77,23 +77,6 @@ def _verify_learner_answer(
                 "method": "rag",
             }
 
-    # ── Method 3 : Web search ─────────────────────────────────────────────────
-    try:
-        from ai.tools.search_web import search_web
-
-        query = f"est-ce que {user_message} est correct ?"
-        result = search_web.invoke({"query": query})
-        if result and "indisponible" not in result:
-            return {
-                "correct": None,  # cannot determine automatically from web snippet
-                "learner_answer": user_message.strip(),
-                "correct_answer": "",
-                "explanation": f"Résultat web : {result[:300]}",
-                "method": "web",
-            }
-    except Exception:
-        pass
-
     return {}
 
 

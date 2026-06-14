@@ -20,7 +20,15 @@ _RULES = [
 
 @tool
 def grammar_checker(text: str) -> str:
-    """Check basic grammar/style rules in a text and return feedback."""
+    """Check basic grammar and style rules in a text and return actionable feedback.
+
+    Use this for language/writing exercises to validate or evaluate a learner's written answer.
+    Pass the raw text to analyse — no instructions, no surrounding context.
+
+    Example:
+      grammar_checker("il mange une pomme et elle boit du lait.")
+      → "Une phrase doit commencer par une majuscule."
+    """
     issues = []
     for pattern, message in _RULES:
         if re.search(pattern, text):

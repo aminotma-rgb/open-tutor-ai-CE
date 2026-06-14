@@ -32,7 +32,20 @@ _BLOCKED_PREFIXES = (
 
 @tool
 def sql_evaluator(query: str) -> str:
-    """Execute a SELECT/WITH/EXPLAIN SQL query on sample W3Schools tables and return results."""
+    """Execute a SQL SELECT query on sample W3Schools tables (Customers, Products, Orders, Employees).
+
+    Use this to validate a SQL exercise or to show the result of a learner's query.
+    Only SELECT, WITH and EXPLAIN statements are allowed — no INSERT/UPDATE/DROP.
+    Pass only the raw SQL string, no markdown fences.
+
+    Available tables: Customers(CustomerID, CustomerName, Country, City),
+                      Products(ProductID, ProductName, Price, Category),
+                      Orders(OrderID, CustomerID, ProductID, Quantity, OrderDate),
+                      Employees(EmployeeID, LastName, FirstName, Title)
+
+    Example:
+      sql_evaluator("SELECT CustomerName, Country FROM Customers WHERE Country='France'")
+    """
     clean = query.strip()
     upper = clean.upper()
     if any(upper.startswith(p) for p in _BLOCKED_PREFIXES):

@@ -7,7 +7,16 @@ from langchain_core.tools import tool
 
 @tool
 def search_web(query: str) -> str:
-    """Search the web for educational resources related to a query."""
+    """Search the web (DuckDuckGo) for a concise definition or educational resource.
+
+    Use this when you need a real-world definition, an example, or context that is not
+    available in the RAG documents. Returns a short abstract or related snippets.
+    Falls back gracefully when offline — the exercise can still be generated without it.
+
+    Example:
+      search_web("définition récursivité informatique")
+      search_web("what is a primary key in SQL")
+    """
     try:
         import httpx
 

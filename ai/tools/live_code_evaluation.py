@@ -10,7 +10,14 @@ from langchain_core.tools import tool
 
 @tool
 def live_code_evaluation(code: str) -> str:
-    """Execute Python code in an isolated subprocess and return stdout/stderr (max 5 s)."""
+    """Execute a Python code snippet and return its stdout/stderr output (timeout 5 s).
+
+    Use this to validate a Python exercise answer or to demonstrate a concept live.
+    Pass only the code string — no markdown fences, no surrounding text.
+
+    Example:
+      live_code_evaluation("print(sum(range(1, 6)))")  → "15"
+    """
     try:
         result = subprocess.run(
             [sys.executable, "-c", code],

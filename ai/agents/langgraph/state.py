@@ -44,7 +44,6 @@ class TutorGraphState(TypedDict, total=False):
 
     # ── OTAI-agentique enrichments ────────────────────────────────────────────
     agent_reasoning: Dict[str, str]  # agent_name → reasoning text
-    tool_selection_log: List[Dict[str, Any]]  # {agent, tool, rationale, result}
     verification_feedback: List[str]  # Verifier → Planner targeted feedback
     human_feedback: str  # injected via Command(resume=...) at HITL points
     learner_answer_verdict: Dict[str, Any]  # verifier result on learner's answer
