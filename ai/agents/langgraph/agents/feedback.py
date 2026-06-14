@@ -26,6 +26,8 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
     agent_trace = list(state.get("agent_trace") or [])
     agent_reasoning = dict(state.get("agent_reasoning") or {})
 
+    teaching_strategies_used = dict(state.get("teaching_strategies_used") or {})
+
     from ai.agents.helpers import _self_critique
 
     # LLM decides what to memorise — enriched with session performance stats
@@ -64,8 +66,9 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
     if should_save and user_id:
         _persist_memories(user_id, support, memories_to_save)
-        # Use full session answer history for aggregated mastery update
         _update_kg_mastery(user_id, support, weak_concepts, exercises, answer_history=answer_history)
+        if teaching_strategies_used:
+            _persist_strategy_outcomes(user_id, support, teaching_strategies_used, answer_history)
 
     agent_reasoning["feedback"] = (
         f"[LLM] {len(memories_to_save)} memories, saved={should_save}"
@@ -171,6 +174,68 @@ def _persist_memories(
             db.close()
     except Exception as exc:
         log.warning("Memory persistence failed: %s", exc)
+
+
+def _persist_strategy_outcomes(
+    user_id: str,
+    support: str,
+    teaching_strategies_used: Dict[str, List[str]],
+    answer_history: List[Dict[str, Any]],
+) -> None:
+    """Write one procedural memory per concept+strategy with the session outcome."""
+    history = answer_history or []
+    correct = sum(1 for v in history if v.get("correct") is True)
+    wrong = sum(1 for v in history if v.get("correct") is False)
+    total = correct + wrong
+    if total == 0:
+        outcome = "partial"
+    elif correct / total > 0.6:
+        outcome = "success"
+    elif wrong / total > 0.6:
+        outcome = "failed"
+    else:
+        outcome = "partial"
+
+    try:
+        from data.database import get_db
+        from data.models.memory import Memory
+
+        db = next(get_db())
+        try:
+            for concept, strategies in teaching_strategies_used.items():
+                for strategy in strategies:
+                    content = f"{concept} — {strategy} : {outcome}"
+                    exists = (
+                        db.query(Memory)
+                        .filter(
+                            Memory.user_id == user_id,
+                            Memory.memory_type == "procedural",
+                            Memory.content == content,
+                        )
+                        .first()
+                    )
+                    if exists:
+                        continue
+                    db.add(
+                        Memory(
+                            id=str(uuid.uuid4()),
+                            user_id=user_id,
+                            memory_type="procedural",
+                            content=content,
+                            memory_metadata={
+                                "support_id": support,
+                                "type": "strategy_outcome",
+                                "concept": concept,
+                                "strategy": strategy,
+                                "outcome": outcome,
+                            },
+                        )
+                    )
+            db.commit()
+        finally:
+            db.close()
+    except Exception as exc:
+        log.warning("Strategy outcome persistence failed: %s", exc)
 
 
 def _update_kg_mastery(

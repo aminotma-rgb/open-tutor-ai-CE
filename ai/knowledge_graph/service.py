@@ -210,13 +210,96 @@ class KnowledgeGraphService:
         # Sort by attempts descending — most stuck concept first
         return sorted(blocked, key=lambda x: x["attempts"], reverse=True)
 
+    def has_requires_relations(self, support: str, db: Session) -> bool:
+        """Return True if at least one 'requires' edge exists for this support."""
+        concepts = db.query(KGConcept).filter(KGConcept.support == support).all()
+        if not concepts:
+            return False
+        concept_ids = {c.id for c in concepts}
+        return (
+            db.query(KGRelation)
+            .filter(
+                KGRelation.source_id.in_(concept_ids),
+                KGRelation.relation == "requires",
+            )
+            .first()
+            is not None
+        )
+
+    def get_prerequisites_of(
+        self,
+        concept_name: str,
+        support: str,
+        db: Session,
+    ) -> List[str]:
+        """Return names of concepts that concept_name requires (its direct prerequisites).
+
+        Edge direction: source --requires--> target means source needs target first.
+        So prerequisites of X = targets of edges where source == X.
+        """
+        concept = (
+            db.query(KGConcept)
+            .filter(KGConcept.name == concept_name, KGConcept.support == support)
+            .first()
+        )
+        if not concept:
+            return []
+        relations = (
+            db.query(KGRelation)
+            .filter(
+                KGRelation.source_id == concept.id,
+                KGRelation.relation == "requires",
+            )
+            .all()
+        )
+        target_ids = [r.target_id for r in relations]
+        if not target_ids:
+            return []
+        prereqs = db.query(KGConcept).filter(KGConcept.id.in_(target_ids)).all()
+        return [p.name for p in prereqs]
+
+    def get_unmastered_prerequisites(
+        self,
+        user_id: str,
+        concept_name: str,
+        support: str,
+        db: Session,
+        threshold: float = 0.4,
+    ) -> List[str]:
+        """Return prerequisites of concept_name that the user hasn't mastered yet."""
+        prereqs = self.get_prerequisites_of(concept_name, support, db)
+        unmastered = []
+        for prereq_name in prereqs:
+            prereq = (
+                db.query(KGConcept)
+                .filter(KGConcept.name == prereq_name, KGConcept.support == support)
+                .first()
+            )
+            if not prereq:
+                unmastered.append(prereq_name)
+                continue
+            row = (
+                db.query(KGUserMastery)
+                .filter(
+                    KGUserMastery.user_id == user_id,
+                    KGUserMastery.concept_id == prereq.id,
+                )
+                .first()
+            )
+            if (row.mastery if row else 0.0) < threshold:
+                unmastered.append(prereq_name)
+        return unmastered
+
     def find_prerequisites(
         self,
         concept_name: str,
         support: str,
         db: Session,
     ) -> List[str]:
-        """Return names of concepts that directly require this concept (incoming 'requires' edges)."""
+        """Return concepts that depend on concept_name (outgoing 'requires' edges where target == concept_name).
+
+        Kept for backward-compatibility — prefer get_prerequisites_of() for new code.
+        """
         concept = (
             db.query(KGConcept)
             .filter(KGConcept.name == concept_name, KGConcept.support == support)
@@ -233,9 +316,9 @@ class KnowledgeGraphService:
             )
             .all()
         )
-        prereq_ids = [r.source_id for r in relations]
-        if not prereq_ids:
+        source_ids = [r.source_id for r in relations]
+        if not source_ids:
             return []
 
-        prereqs = db.query(KGConcept).filter(KGConcept.id.in_(prereq_ids)).all()
-        return [p.name for p in prereqs]
+        dependents = db.query(KGConcept).filter(KGConcept.id.in_(source_ids)).all()
+        return [d.name for d in dependents]

@@ -29,6 +29,10 @@ class TutorGraphState(TypedDict, total=False):
     knowledge_graph: Dict[str, Any]
     weak_concepts: List[str]
     blocked_concepts: List[Dict[str, Any]]  # {concept, attempts, mastery, last_error}
+    prerequisite_gaps: List[str]  # unmastered prerequisites of blocked/weak concepts
+    concept_levels: Dict[str, str]  # concept → "beginner"|"intermediate"|"advanced"
+    teaching_strategies_used: Dict[str, List[str]]  # concept → [strategies tried this session]
+    error_patterns: Dict[str, Dict]  # concept → {pattern, hypothesis, severity}
     adjusted_level: str
     difficulties: List[str]
     strategy: str

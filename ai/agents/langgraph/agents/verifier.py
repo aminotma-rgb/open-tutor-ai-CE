@@ -1,4 +1,4 @@
-"""VerifierAgent — LLM structured judgment + text-overlap fallback + interrupt P2."""
+"""VerifierAgent — LLM structured judgment + LLM-as-judge for text answers + interrupt P2."""
 
 from __future__ import annotations
 
@@ -55,27 +55,43 @@ def _verify_learner_answer(
         except Exception:
             pass
 
-    # ── Method 2 : RAG document scan ─────────────────────────────────────────
-    if rag_docs:
-        corpus = " ".join(d.get("content", "") for d in rag_docs).lower()
-        # Combine learner answer with question context for richer matching
-        combined = (user_message + " " + question_context).lower()
-        msg_lower = user_message.lower()
-        words = [w for w in re.findall(r"\w+", combined) if len(w) > 3]
-        hits = sum(1 for w in words if w in corpus)
-        if words:
-            supported = hits / len(words) >= 0.4
-            return {
-                "correct": supported,
-                "learner_answer": user_message.strip(),
-                "correct_answer": "",
-                "explanation": (
-                    "Réponse cohérente avec les documents du cours."
-                    if supported
-                    else "Réponse non confirmée par les documents du cours."
-                ),
-                "method": "rag",
-            }
+    # ── Method 2 : LLM-as-judge for textual answers ──────────────────────────
+    if question_context:
+        try:
+            from ai.llm.service import call_llm
+
+            corpus = " ".join(d.get("content", "") for d in rag_docs)[:600] if rag_docs else ""
+            rag_section = f"\nContenu du cours (référence) :\n{corpus}" if corpus else ""
+
+            prompt = (
+                f"Tu es un correcteur pédagogique. Évalue la réponse de l'apprenant.\n\n"
+                f"Question posée : {question_context[:300]}\n"
+                f"Réponse de l'apprenant : {user_message.strip()[:300]}"
+                f"{rag_section}\n\n"
+                f"Réponds UNIQUEMENT en JSON :\n"
+                f'{{"verdict": "correct|partial|wrong", '
+                f'"explanation": "explication courte", '
+                f'"correct_answer": "réponse attendue ou vide si correct"}}'
+            )
+
+            llm_text = call_llm(prompt, max_tokens=200)
+            if llm_text:
+                start = llm_text.find("{")
+                end = llm_text.rfind("}") + 1
+                if start >= 0 and end > start:
+                    data = json.loads(llm_text[start:end])
+                    verdict = data.get("verdict", "")
+                    correct_map = {"correct": True, "partial": None, "wrong": False}
+                    if verdict in correct_map:
+                        return {
+                            "correct": correct_map[verdict],
+                            "learner_answer": user_message.strip(),
+                            "correct_answer": data.get("correct_answer", ""),
+                            "explanation": data.get("explanation", ""),
+                            "method": "llm_judge",
+                        }
+        except Exception as exc:
+            log.debug("LLM-as-judge failed: %s", exc)
 
     return {}
 

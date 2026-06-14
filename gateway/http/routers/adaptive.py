@@ -278,6 +278,140 @@ def _persist_adjusted_level(
         log.warning("Failed to persist adjusted_level: %s", exc)
 
 
+# ── Validation phrases that falsely confirm a wrong answer ───────────────────
+_VALIDATION_PHRASES = (
+    "c'est correct", "c'est exact", "c'est juste", "exactement", "bravo",
+    "très bien", "parfait", "excellent", "bonne réponse", "bien joué",
+    "that's correct", "that's right", "exactly", "well done", "great job",
+    "good answer", "correct", "right answer",
+)
+
+
+def _check_tutor_response(content: str, state: dict) -> Optional[Dict[str, Any]]:
+    """Detect rule violations in the tutor's generated response.
+
+    Returns a violation dict {rule, detail} or None if the response is clean.
+    Checks three rules in priority order:
+      1. False validation — tutor praises a wrong answer
+      2. New concept while blocked — tutor ignores ABSOLUTE RULE
+      3. Off-topic — tutor ignores all known difficulties
+    """
+    if not content:
+        return None
+
+    lower = content.lower()
+
+    # Rule 1 — false validation of a wrong answer
+    verdict = state.get("learner_answer_verdict") or {}
+    if verdict.get("correct") is False:
+        for phrase in _VALIDATION_PHRASES:
+            if phrase in lower:
+                return {
+                    "rule": "false_validation",
+                    "detail": (
+                        f"La réponse de l'apprenant était fausse "
+                        f"(attendu : {verdict.get('correct_answer', '?')}) "
+                        f"mais le tuteur a validé avec '{phrase}'."
+                    ),
+                    "correct_answer": verdict.get("correct_answer", ""),
+                    "learner_answer": verdict.get("learner_answer", ""),
+                }
+
+    # Rule 2 — new concept introduced while blocked concepts exist
+    blocked_concepts = state.get("blocked_concepts") or []
+    if blocked_concepts:
+        blocked_names = {bc["concept"].lower() for bc in blocked_concepts}
+        known_concepts = (
+            set(state.get("weak_concepts") or [])
+            | {bc["concept"] for bc in blocked_concepts}
+        )
+        # A simple heuristic: if the response is very long and doesn't mention
+        # any blocked concept, flag it as potentially off-topic
+        if len(content) > 200:
+            mentions_blocked = any(name in lower for name in blocked_names)
+            if not mentions_blocked:
+                return {
+                    "rule": "ignores_blocked",
+                    "detail": (
+                        f"Le tuteur n'a mentionné aucun des concepts bloqués : "
+                        f"{[bc['concept'] for bc in blocked_concepts[:3]]}"
+                    ),
+                    "blocked": [bc["concept"] for bc in blocked_concepts[:2]],
+                }
+
+    # Rule 3 — response completely ignores known difficulties
+    difficulties = state.get("difficulties") or []
+    if difficulties and len(content) > 300:
+        diff_keywords = []
+        for d in difficulties[:3]:
+            # Extract the concept name from the label
+            part = d.split(":")[-1].strip().lower() if ":" in d else d.lower()
+            diff_keywords.extend(part.split()[:3])
+        diff_keywords = [w for w in diff_keywords if len(w) > 3]
+        if diff_keywords and not any(kw in lower for kw in diff_keywords):
+            return {
+                "rule": "off_topic",
+                "detail": f"Réponse hors sujet — difficultés ignorées : {difficulties[:2]}",
+                "difficulties": difficulties[:2],
+            }
+
+    return None
+
+
+def _fix_tutor_response(
+    content: str,
+    violation: Dict[str, Any],
+    state: dict,
+    enriched_system: str,
+    messages: List[Any],
+    base_url: str,
+    api_key: str,
+    llm_path: str,
+    model: str,
+) -> str:
+    """Attempt to fix a rule violation by asking the LLM to regenerate.
+
+    Adds the violation context to the system prompt and retries once.
+    Returns the corrected content, or the original if regeneration fails.
+    """
+    rule = violation.get("rule", "")
+
+    if rule == "false_validation":
+        correction_directive = (
+            f"\n\nCORRECTION OBLIGATOIRE : Ta réponse précédente contenait une validation "
+            f"incorrecte. La réponse de l'apprenant '{violation.get('learner_answer')}' est FAUSSE "
+            f"— la bonne réponse est '{violation.get('correct_answer')}'. "
+            f"Tu DOIS signaler l'erreur clairement, expliquer pourquoi, donner la bonne réponse, "
+            f"et NE PAS utiliser de formule de félicitation."
+        )
+    elif rule == "ignores_blocked":
+        blocked = violation.get("blocked", [])
+        correction_directive = (
+            f"\n\nCORRECTION OBLIGATOIRE : Tu as ignoré les concepts bloqués {blocked}. "
+            f"Ta réponse DOIT se concentrer exclusivement sur ces concepts "
+            f"et proposer une nouvelle approche pédagogique."
+        )
+    else:  # off_topic
+        diffs = violation.get("difficulties", [])
+        correction_directive = (
+            f"\n\nCORRECTION OBLIGATOIRE : Ta réponse ignorait les difficultés connues {diffs}. "
+            f"Recentre ta réponse sur ces difficultés."
+        )
+
+    corrected_system = enriched_system + correction_directive
+    try:
+        corrected = _llm_conversational_response(
+            corrected_system, messages, base_url, api_key, llm_path, model
+        )
+        if corrected:
+            log.info("Tutor response corrected (rule=%s)", rule)
+            return corrected
+    except Exception as exc:
+        log.warning("Tutor response fix failed: %s", exc)
+
+    return content
+
+
 def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -> str:
     """Enrich the support system prompt with the adaptive context produced by agents.
 
@@ -297,6 +431,14 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
     adjusted_level = state.get("adjusted_level", "")
     if adjusted_level:
         parts.append(f"EVALUATED LEVEL: {adjusted_level}")
+
+    concept_levels: Dict[str, str] = state.get("concept_levels") or {}
+    if concept_levels:
+        profile = ", ".join(
+            f"{concept} ({level})"
+            for concept, level in concept_levels.items()
+        )
+        parts.append(f"CONCEPT LEVEL PROFILE: {profile}")
 
     # ── Blocked concepts (highest priority — chronic failure) ────────────────────
     blocked_concepts = state.get("blocked_concepts") or []
@@ -615,6 +757,17 @@ async def adaptive_chat(
         llm_path,
         body.model,
     )
+
+    # Post-generation verification — fix rule violations before sending to learner
+    violation = _check_tutor_response(content, final_state)
+    if violation:
+        log.warning("Tutor response violation detected: rule=%s — %s", violation["rule"], violation["detail"])
+        content = await asyncio.to_thread(
+            _fix_tutor_response,
+            content, violation, final_state,
+            enriched_system, body.messages,
+            base_url, api_key, llm_path, body.model,
+        )
 
     if not body.stream:
         return {
