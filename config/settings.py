@@ -92,7 +92,7 @@ class Settings:
         "langchain": {
             "llm_model": os.getenv("LLM_MODEL", "mistral"),
             "llm_temperature": 0.7,
-            "orchestrator_use_llm": False,
+            "orchestrator_use_llm": True,
         },
     }
 
