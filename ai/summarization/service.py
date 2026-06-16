@@ -223,9 +223,12 @@ class SummarizationService:
             if isinstance(m, dict)
         )
         prompt = (
-            "Résume en 3-5 phrases la session d'apprentissage suivante. "
-            "Mets en avant les concepts clés abordés, les difficultés rencontrées "
-            "et les progrès réalisés.\n\n"
+            "Résume en 3-5 phrases la session d'apprentissage suivante.\n"
+            "IMPORTANT : distingue clairement les réponses de l'apprenant de celles du tuteur.\n"
+            "- Si l'apprenant a donné une mauvaise réponse, mentionne-la explicitement (ex: 'l'apprenant a répondu X au lieu de Y').\n"
+            "- Ne présente jamais une correction du tuteur comme une réussite de l'apprenant.\n"
+            "Mets en avant : les concepts abordés, les erreurs commises par l'apprenant, "
+            "et les progrès réels observés.\n\n"
             f"{conversation}\n\nRésumé:"
         )
 
