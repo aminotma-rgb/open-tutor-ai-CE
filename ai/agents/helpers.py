@@ -32,6 +32,19 @@ _DOWNGRADE_SIGNALS = {
     "ne comprends pas",
     "je comprends pas",
     "confusion",
+    "débutant",
+    "débutante",
+    "novice",
+    "je suis nul",
+    "je suis nulle",
+    "je débute",
+    "je commence",
+    "jamais fait",
+    "première fois",
+    "first time",
+    "beginner",
+    "i'm a beginner",
+    "i am a beginner",
 }
 _LEVELS = ("beginner", "intermediate", "advanced")
 

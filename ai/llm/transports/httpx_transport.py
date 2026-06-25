@@ -10,7 +10,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = os.getenv("LLM_MODEL", "mistral")
+_DEFAULT_MODEL = os.getenv("LLM_MODEL", "gpt-4 mini")  # Ollama2-7b, gpt-4, gpt-3.5-turbo, etc.
 
 
 def call_llm_sync(

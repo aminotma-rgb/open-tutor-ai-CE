@@ -161,7 +161,8 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     prompt = (
         f"Tu évalues le niveau de {first_name} en '{support}'.\n"
-        f"Niveau déclaré : {current_level}\n"
+        f"Niveau heuristique : {adj_level} (historique mémorisé : {current_level})\n"
+        f"IMPORTANT : si {first_name} se déclare explicitement débutant/novice dans son message, prioritise cette déclaration sur l'historique.\n"
         f"Concepts faibles (KG) : {weak_concepts}\n"
         + (f"BLOCAGES CHRONIQUES (≥5 tentatives sans progrès) : {blocked_names}\n" if blocked_names else "")
         + (f"PATTERNS D'ERREUR DÉTECTÉS : {json.dumps(error_patterns, ensure_ascii=False)[:200]}\n" if error_patterns else "")

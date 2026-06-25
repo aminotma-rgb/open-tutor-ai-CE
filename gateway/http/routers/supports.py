@@ -157,7 +157,10 @@ async def upload_support_file(
 
     # 3. Chunked read — reject as soon as running total exceeds the limit
     contents = b""
-    async for chunk in file:
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
         contents += chunk
         if len(contents) > max_bytes:
             raise _too_large
