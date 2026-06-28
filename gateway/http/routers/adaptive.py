@@ -355,6 +355,36 @@ def _check_tutor_response(content: str, state: dict) -> Optional[Dict[str, Any]]
                 "difficulties": difficulties[:2],
             }
 
+    # Rule 4 — premature topic change while weak concepts / difficulties remain
+    weak_concepts = state.get("weak_concepts") or []
+    if weak_concepts or difficulties:
+        topic_change_phrases = (
+            "passer à une autre",
+            "autre notion",
+            "autre opération",
+            "autre chapitre",
+            "nouvelle notion",
+            "nouveau sujet",
+            "move on to",
+            "another topic",
+            "something else",
+            "voulez-tu continuer avec autre",
+            "veux-tu continuer avec autre",
+        )
+        if any(phrase in lower for phrase in topic_change_phrases):
+            pending = (
+                [bc["concept"] for bc in (state.get("blocked_concepts") or [])]
+                + [c for c in weak_concepts if c not in {bc["concept"] for bc in (state.get("blocked_concepts") or [])}]
+            )
+            return {
+                "rule": "premature_topic_change",
+                "detail": (
+                    f"Le tuteur a proposé de changer de notion alors que des concepts "
+                    f"ne sont pas encore maîtrisés : {pending[:3]}"
+                ),
+                "pending_concepts": pending[:3],
+            }
+
     return None
 
 
@@ -390,6 +420,15 @@ def _fix_tutor_response(
             f"\n\nCORRECTION OBLIGATOIRE : Tu as ignoré les concepts bloqués {blocked}. "
             f"Ta réponse DOIT se concentrer exclusivement sur ces concepts "
             f"et proposer une nouvelle approche pédagogique."
+        )
+    elif rule == "premature_topic_change":
+        pending = violation.get("pending_concepts", [])
+        correction_directive = (
+            f"\n\nCORRECTION OBLIGATOIRE : Tu as proposé de passer à un autre sujet alors que "
+            f"l'apprenant n'a pas encore maîtrisé : {pending}. "
+            f"INTERDIT de suggérer un changement de notion. "
+            f"Reste sur le concept en cours, propose un nouvel exercice ou une nouvelle approche "
+            f"pédagogique sur ce même concept."
         )
     else:  # off_topic
         diffs = violation.get("difficulties", [])
@@ -503,6 +542,14 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
     non_blocked_weak = [c for c in weak_concepts if c not in blocked_names]
     if non_blocked_weak:
         parts.append(f"CONCEPTS TO REINFORCE: {', '.join(str(c) for c in non_blocked_weak[:5])}")
+        parts.append(
+            "MASTERY GATE — TOPIC CHANGE FORBIDDEN: The learner has NOT yet demonstrated "
+            "sufficient mastery of the concepts listed above. "
+            "You MUST NOT suggest moving to another topic, operation, or notion. "
+            "Do NOT offer options like 'passer à une autre notion', 'autre opération', "
+            "'voulez-tu continuer avec autre chose', or any equivalent phrasing. "
+            "Stay exclusively on the current concept until the learner demonstrates clear understanding."
+        )
 
     memory_summary = state.get("memory_summary") or state.get("session_summary") or ""
     if memory_summary:

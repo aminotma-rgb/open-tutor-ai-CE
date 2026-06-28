@@ -35,6 +35,18 @@ PRE_SCORE = 3   # 3/10
 POST_SCORE = 7  # 7/10 — établi après les 4 sessions
 MAX_SCORE = 10
 
+# Exigences statistiques pour la validation humaine du Learning Gain longitudinal.
+# S5 cumule 4 sessions → l'effet mesuré est plus stable que S0 (une seule session),
+# mais le protocole statistique reste identique.
+STATISTICAL_REQUIREMENTS = {
+    "n_min": 15,
+    # Puissance 0,80 avec Cohen's d = 0,5 et α = 0,05 (Cohen 1988).
+    # Pour S5 (4 sessions), un effet d ≥ 0,5 est réaliste (apprentissage cumulatif).
+    "test": "t-test apparié (pré vs post), p < 0.05",
+    "effect_size": "Cohen's d ≥ 0.5 (effet moyen)",
+    "note": "Mesurer aussi la progression inter-sessions (S1→S4) par ANOVA à mesures répétées.",
+}
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -183,12 +195,17 @@ def test_s5_learning_gain_framework():
     """
     lg = _compute_learning_gain(PRE_SCORE, POST_SCORE, MAX_SCORE)
     print(
-        f"\n[S5 — Learning Gain]\n"
+        f"\n[S5 — Learning Gain longitudinal]\n"
         f"  Pré-test  : {PRE_SCORE}/{MAX_SCORE}\n"
         f"  Post-test : {POST_SCORE}/{MAX_SCORE}\n"
         f"  LG = ({POST_SCORE} - {PRE_SCORE}) / ({MAX_SCORE} - {PRE_SCORE}) = {lg:.2f}\n"
         f"  Cible     : ≥ 0,30 (seuil Hake 1998)\n"
         f"  Statut    : {'✓ ATTEINT' if lg >= 0.30 else '✗ NON ATTEINT'}\n"
+        f"\n  Exigences statistiques pour valider LG ≥ 0,30 :\n"
+        f"    n_min : {STATISTICAL_REQUIREMENTS['n_min']} sujets\n"
+        f"    test  : {STATISTICAL_REQUIREMENTS['test']}\n"
+        f"    effet : {STATISTICAL_REQUIREMENTS['effect_size']}\n"
+        f"    note  : {STATISTICAL_REQUIREMENTS['note']}\n"
         f"  → Soumettre à double évaluation humaine (accord ≥ 80 % requis)."
     )
     assert lg >= 0.0, "Learning Gain négatif — régression détectée."

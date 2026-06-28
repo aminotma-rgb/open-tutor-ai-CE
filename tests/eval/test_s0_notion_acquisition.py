@@ -15,6 +15,7 @@ import pytest
 
 from data.models.memory import Memory
 from ai.retrieval.context_retrieval import ContextRetrievalService
+from tests.eval.eval_judge import context_recall, recall_at_k, offline_judge
 
 # ── Corpus versionné (10 documents pédagogiques — boucles Python) ─────────────
 # 3 pertinents pour "Peux-tu m'expliquer les boucles for en Python ?"
@@ -127,6 +128,12 @@ CORPUS = [
 # Ground truth fixée avant l'exécution — 3 documents pertinents
 RELEVANT_DOC_IDS = {"doc_01_for_loop_intro", "doc_02_range_function", "doc_03_list_iteration"}
 
+# Vérité-terrain sémantique pour le Context Recall (distinct du Recall@5 sur les IDs).
+GROUND_TRUTH = (
+    "La boucle for en Python itère sur une séquence. "
+    "La fonction range(n) génère les entiers de 0 à n-1."
+)
+
 # Question de l'apprenant débutant (corpus S0 — distinct du dev Python)
 LEARNER_QUERY = "Peux-tu m'expliquer les boucles for en Python ?"
 
@@ -175,6 +182,18 @@ QUIZ_MAX = len(QUIZ_QUESTIONS)  # 5
 # Scores simulés pour le cadre LG (à remplacer par les scores mesurés lors de l'évaluation humaine)
 PRE_SCORE = 1   # score débutant typique avant session (1/5)
 POST_SCORE = 4  # score typique après une session bien conduite (4/5)
+
+# Exigences statistiques pour la validation humaine du Learning Gain.
+# Ces constantes documentent le protocole — elles ne sont pas vérifiées automatiquement.
+STATISTICAL_REQUIREMENTS = {
+    "n_min": 15,
+    # n ≥ 15 est le minimum pour qu'un t-test apparié atteigne une puissance statistique
+    # de 0,80 avec Cohen's d = 0,5 (effet moyen) et α = 0,05 (Hake 1998, Cohen 1988).
+    # En dessous de 15 sujets, LG ≥ 0,30 ne permet pas de conclure à un effet réel.
+    "test": "t-test apparié (pré vs post), p < 0.05",
+    "effect_size": "Cohen's d ≥ 0.5 (effet moyen)",
+    "correction": "Bonferroni si comparaison multi-groupes (débutant / intermédiaire)",
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -253,9 +272,12 @@ def _retrieve_niveau(user_id: str, db) -> str | None:
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
 def test_s0_recall_at_5_above_target(monkeypatch):
-    """Recall@5 ≥ 0,80 sur le corpus de 10 documents versionnés."""
-    # Le RAG est mocké pour retourner les 5 docs les mieux scorés du corpus.
-    # Les 3 documents pertinents (rang 0-2) apparaissent dans ce top-5.
+    """Recall@5 ≥ 0,80 sur le corpus de 10 documents versionnés.
+
+    Métrique retriever : vérifie que le retriever place les documents pertinents
+    dans le top-5 (eval_judge.recall_at_k). Distinct du Context Recall (test suivant)
+    qui mesure la couverture sémantique du contexte assemblé.
+    """
     top_5 = CORPUS[:5]
 
     monkeypatch.setattr(
@@ -273,11 +295,28 @@ def test_s0_recall_at_5_above_target(monkeypatch):
     )
 
     retrieved_ids = {d["id"] for d in retrieved}
-    recall = _compute_recall_at_k(retrieved_ids, RELEVANT_DOC_IDS)
+    score = recall_at_k(RELEVANT_DOC_IDS, retrieved_ids)
 
-    assert recall >= 0.80, (
-        f"Recall@5 = {recall:.2f} — documents pertinents manquants dans le top-5 : "
+    assert score >= 0.80, (
+        f"Recall@5 = {score:.2f} — documents pertinents manquants dans le top-5 : "
         f"{RELEVANT_DOC_IDS - retrieved_ids}"
+    )
+
+
+def test_s0_context_recall_above_target():
+    """Context Recall ≥ 0,80 : la vérité-terrain est couverte par le contexte assemblé.
+
+    Métrique contexte (distincte du Recall@5) : vérifie que les 3 documents pertinents,
+    une fois assemblés en contexte, couvrent bien la ground truth sémantiquement.
+    """
+    source_docs = [d for d in CORPUS if d["id"] in RELEVANT_DOC_IDS]
+    contexts = [d["content"] for d in source_docs]
+
+    score = context_recall(GROUND_TRUTH, contexts, judge=offline_judge)
+
+    assert score >= 0.80, (
+        f"Context Recall = {score:.2f} — le contexte assemblé ne couvre pas suffisamment "
+        f"la vérité-terrain. Seuil : ≥ 0,80."
     )
 
 
@@ -395,8 +434,8 @@ def test_s0_learning_gain_framework():
     """Calcule et documente le LG pour double évaluation humaine.
 
     Ce test ne vérifie pas le seuil LG ≥ 0,30 — la validation est humaine.
-    Il garantit que le cadre de calcul est opérationnel et que le LG est
-    dans l'intervalle [0, 1].
+    Il garantit que le cadre de calcul est opérationnel et documente les exigences
+    statistiques pour une conclusion valide (voir STATISTICAL_REQUIREMENTS).
     """
     pre_score = PRE_SCORE
     post_score = POST_SCORE
@@ -417,12 +456,16 @@ def test_s0_learning_gain_framework():
         f"  Score post-test : {post_score}/{score_max}\n"
         f"  Learning Gain   : {lg:.2f} (seuil ≥ 0,30 — Hake 1998)\n"
         f"  → {'PASS ✓' if lg >= 0.30 else 'FAIL ✗'} (double évaluation humaine requise)\n"
+        f"\n  Exigences statistiques pour valider LG ≥ 0,30 :\n"
+        f"    n_min    : {STATISTICAL_REQUIREMENTS['n_min']} sujets\n"
+        f"    test     : {STATISTICAL_REQUIREMENTS['test']}\n"
+        f"    effet    : {STATISTICAL_REQUIREMENTS['effect_size']}\n"
+        f"    correction: {STATISTICAL_REQUIREMENTS['correction']}\n"
         f"\n  Quiz standardisé :"
     )
     for q in QUIZ_QUESTIONS:
         print(f"    [{q['id']}] {q['question']}")
 
-    # Sanity checks — la validation du seuil 0,30 est humaine
     assert 0.0 <= lg <= 1.0, (
         f"LG = {lg:.2f} hors de l'intervalle [0, 1] — vérifier les scores pré/post."
     )
