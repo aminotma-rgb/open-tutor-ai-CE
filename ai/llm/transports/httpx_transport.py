@@ -10,7 +10,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = os.getenv("LLM_MODEL", "gpt-4 mini")  # Ollama2-7b, gpt-4, gpt-3.5-turbo, etc.
+_DEFAULT_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 
 def call_llm_sync(
@@ -83,23 +83,18 @@ def call_llm_with_messages(
 
     for url in _ollama_urls():
         try:
-            system = next(
-                (m["content"] for m in messages if m.get("role") == "system"), ""
-            )
-            user = next(
-                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
-                "",
-            )
-            payload: dict = {"model": model, "prompt": user, "stream": False}
-            if system:
-                payload["system"] = system
             resp = httpx.post(
-                f"{url.rstrip('/')}/api/generate",
-                json=payload,
+                f"{url.rstrip('/')}/api/chat",
+                json={"model": model, "messages": messages, "stream": False},
                 timeout=timeout,
             )
             resp.raise_for_status()
-            text = resp.json().get("response", "").strip()
+            text = (
+                resp.json()
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
             if text:
                 return text
         except Exception as exc:

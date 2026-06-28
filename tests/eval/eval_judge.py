@@ -71,7 +71,7 @@ def llm_judge(prompt: str) -> Optional[str]:
     """Juge réel — appelle le LLM du dépôt via le routing multi-provider."""
     try:
         from ai.llm.service import call_llm
-        return call_llm(prompt, max_tokens=300)
+        return call_llm(prompt, max_tokens=600)
     except Exception:
         return None
 
