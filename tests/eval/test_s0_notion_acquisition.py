@@ -15,7 +15,7 @@ import pytest
 
 from data.models.memory import Memory
 from ai.retrieval.context_retrieval import ContextRetrievalService
-from tests.eval.eval_judge import context_recall, recall_at_k, offline_judge
+from tests.eval.eval_judge import context_recall, faithfulness as eval_faithfulness, recall_at_k, offline_judge
 
 # ── Corpus versionné (10 documents pédagogiques — boucles Python) ─────────────
 # 3 pertinents pour "Peux-tu m'expliquer les boucles for en Python ?"
@@ -323,16 +323,17 @@ def test_s0_context_recall_above_target():
 def test_s0_faithfulness_above_target():
     """Faithfulness ≥ 0,90 : toutes les affirmations sont ancrées dans les sources."""
     source_docs = [d for d in CORPUS if d["id"] in RELEVANT_DOC_IDS]
+    contexts = [d["content"] for d in source_docs]
 
-    # Juge mocké : toutes les claims de MOCK_RESPONSE_BEGINNER sont ancrées (cas attendu)
-    faithfulness = _compute_faithfulness(
+    score = eval_faithfulness(
+        MOCK_RESPONSE_BEGINNER,
+        contexts,
         claims=MOCK_RESPONSE_CLAIMS,
-        source_docs=source_docs,
-        judge_fn=lambda claim, sources: True,
+        judge=offline_judge,
     )
 
-    assert faithfulness >= 0.90, (
-        f"Faithfulness = {faithfulness:.0%} — au moins une affirmation n'est pas "
+    assert score >= 0.90, (
+        f"Faithfulness = {score:.0%} — au moins une affirmation n'est pas "
         f"ancrée dans les sources récupérées. Seuil : ≥ 90 %."
     )
 
