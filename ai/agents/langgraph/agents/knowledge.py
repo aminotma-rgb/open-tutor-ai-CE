@@ -82,7 +82,6 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         from data.database import get_db
-        from data.models.memory import KGConcept, KGUserMastery
         from ai.knowledge_graph.service import KnowledgeGraphService
 
         db = next(get_db())

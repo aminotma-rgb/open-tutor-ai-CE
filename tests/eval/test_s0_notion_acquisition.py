@@ -15,7 +15,7 @@ import pytest
 
 from data.models.memory import Memory
 from ai.retrieval.context_retrieval import ContextRetrievalService
-from tests.eval.internal.eval_judge import context_recall, faithfulness as eval_faithfulness, recall_at_k, offline_judge
+from tests.eval.eval_judge import context_recall, faithfulness as eval_faithfulness, recall_at_k, offline_judge
 
 # ── Corpus versionné (10 documents pédagogiques — boucles Python) ─────────────
 # 3 pertinents pour "Peux-tu m'expliquer les boucles for en Python ?"

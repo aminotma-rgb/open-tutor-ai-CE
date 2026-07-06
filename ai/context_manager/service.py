@@ -223,16 +223,10 @@ class ContextManager:
         cutoff = datetime.utcnow() - timedelta(days=max_age_days)
         result = []
         for mem in memories:
-            # Support filter — only pedagogical memories (behavioral/procedural)
-            # are scoped to a course topic; episodic memories are personal facts
-            # about the learner and must stay recallable regardless of which
-            # support is currently active. support_id lives in memory_metadata
-            # (see _persist_memories in feedback.py), not at the top level.
-            if mem.get("memory_type") != "episodic":
-                metadata = mem.get("memory_metadata") or {}
-                mem_support = metadata.get("support_id") or metadata.get("support") or ""
-                if mem_support and mem_support != support:
-                    continue
+            # Support filter — keep if no support set or it matches
+            mem_support = mem.get("support") or mem.get("topic") or ""
+            if mem_support and mem_support != support:
+                continue
 
             # Recency filter
             created_raw = mem.get("created_at")

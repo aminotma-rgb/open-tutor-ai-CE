@@ -5,13 +5,6 @@ Humain     : Learning Gain = (post − pré) / (max − pré) ≥ 0,30
 
 Domaine : JavaScript (distinct des données de développement Python)
 4 sessions simulées : apprentissage → difficulté → quiz → montée en niveau
-
-Couvre aussi la mémoire personnelle/contextuelle (pas seulement pédagogique) :
-`_llm_decide_memories()` (feedback.py) reçoit désormais la conversation et peut
-retenir un fait personnel mentionné par l'apprenant (ex. centre d'intérêt), en
-plus de la stratégie/niveau/performance — utile pour personnaliser de futurs
-exercices. Voir `test_s5_personal_context_extracted_from_conversation` et
-`test_s5_personal_context_retrieved_across_sessions`.
 """
 
 import uuid
@@ -95,37 +88,6 @@ def _retrieve_all_sessions(user_id: str, db) -> list:
             "niveau": (row.memory_metadata or {}).get("niveau"),
         }
         for row in rows
-        if (row.memory_metadata or {}).get("kind") != "personal"
-    ]
-
-
-def _store_personal_context(user_id: str, content: str, session_num: int, db) -> None:
-    """Persiste un fait personnel/contextuel — distinct des sessions pédagogiques
-    (memory_metadata.kind='personal' permet de le filtrer sans toucher au schéma
-    utilisé par les sessions ci-dessus)."""
-    row = Memory(
-        id=str(uuid.uuid4()),
-        user_id=user_id,
-        memory_type="episodic",
-        content=content,
-        memory_metadata={"kind": "personal", "session": session_num},
-        created_at=datetime.utcnow() - timedelta(days=(4 - session_num)),
-    )
-    db.add(row)
-    db.commit()
-
-
-def _retrieve_personal_context(user_id: str, db) -> list:
-    rows = (
-        db.query(Memory)
-        .filter(Memory.user_id == user_id, Memory.memory_type == "episodic")
-        .order_by(Memory.created_at.asc())
-        .all()
-    )
-    return [
-        row.content
-        for row in rows
-        if (row.memory_metadata or {}).get("kind") == "personal"
     ]
 
 
@@ -221,54 +183,6 @@ def test_s5_notions_cumulated_across_sessions(db, user_id):
     assert "déclaration de fonction" in all_notions
     assert "closures" in all_notions
     assert len(set(all_notions)) >= 6, "Trop peu de notions distinctes cumulées."
-
-
-# ── Mémoire personnelle/contextuelle (pas seulement pédagogique) ──────────────
-
-def test_s5_personal_context_extracted_from_conversation(monkeypatch):
-    """_llm_decide_memories() retient un fait personnel mentionné en conversation,
-    en plus de la mémoire pédagogique — pas seulement stratégie/niveau/performance."""
-    from ai.agents.langgraph.agents.feedback import _llm_decide_memories
-    import ai.llm.service as llm_service
-
-    fake_llm_response = (
-        '[{"type": "episodic", "content": "aime la randonnée le week-end", "importance": "medium"},'
-        ' {"type": "procedural", "content": "Session javascript-fonctions niveau débutant : '
-        'introduction aux fonctions", "importance": "medium"}]'
-    )
-    monkeypatch.setattr(llm_service, "call_llm", lambda *a, **k: fake_llm_response)
-
-    messages = [
-        {"role": "user", "content": "Avant de commencer, j'adore faire de la randonnée le week-end."},
-        {"role": "assistant", "content": "Super ! Parlons maintenant des fonctions JavaScript."},
-    ]
-    memories = _llm_decide_memories(
-        "javascript-fonctions", [], "débutant", "Introduction aux fonctions",
-        first_name="Alex", answer_history=[], messages=messages,
-    )
-
-    contents = [m["content"].lower() for m in memories]
-    assert any("randonnée" in c for c in contents), (
-        "Le fait personnel mentionné en conversation n'a pas été retenu — "
-        "la mémoire reste limitée au contexte pédagogique."
-    )
-    assert any("javascript" in c or "fonction" in c for c in contents), (
-        "La mémoire pédagogique (stratégie/support) a régressé après l'ajout du contexte personnel."
-    )
-
-
-def test_s5_personal_context_retrieved_across_sessions(db, user_id):
-    """Un fait personnel stocké en session 1 reste retrouvable aux sessions suivantes,
-    aux côtés de la mémoire pédagogique — sans interférer avec elle."""
-    _store_personal_context(user_id, "aime la randonnée le week-end", session_num=1, db=db)
-    sessions = _simulate_4_sessions(user_id, "javascript-fonctions", db)
-
-    personal = _retrieve_personal_context(user_id, db)
-    assert personal == ["aime la randonnée le week-end"], (
-        "Le fait personnel n'est pas retrouvé tel quel après les sessions pédagogiques suivantes."
-    )
-    # La mémoire pédagogique existante n'est pas polluée par l'entrée personnelle.
-    assert len(sessions) == 4, "L'ajout d'un fait personnel a perturbé le décompte des sessions pédagogiques."
 
 
 # ── Cadre Learning Gain (composante humaine) ──────────────────────────────────

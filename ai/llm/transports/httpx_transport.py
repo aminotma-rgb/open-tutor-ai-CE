@@ -10,20 +10,17 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-
-def _default_model() -> str:
-    """Read LLM_MODEL lazily — module import order must not freeze this before .env loads."""
-    return os.getenv("LLM_MODEL", "gpt-4o-mini")
+_DEFAULT_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 
 def call_llm_sync(
     prompt: str,
     model: Optional[str] = None,
     max_tokens: int = 500,
-    timeout: float = 180.0,
+    timeout: float = 30.0,
 ) -> Optional[str]:
     """Provider-agnostic sync LLM call. Returns text or None on any failure."""
-    model = model or _default_model()
+    model = model or _DEFAULT_MODEL
 
     for url in _ollama_urls():
         try:
@@ -74,7 +71,7 @@ def call_llm_with_messages(
     messages: List[dict],
     model: Optional[str] = None,
     max_tokens: int = 800,
-    timeout: float = 180.0,
+    timeout: float = 60.0,
 ) -> Optional[str]:
     """Multi-turn messages call (system + user/assistant roles).
 
@@ -82,7 +79,7 @@ def call_llm_with_messages(
     OpenAI-compatible: passes the messages array directly to /chat/completions.
     Returns text or None on any failure.
     """
-    model = model or _default_model()
+    model = model or _DEFAULT_MODEL
 
     for url in _ollama_urls():
         try:
@@ -134,7 +131,7 @@ def get_langchain_llm(model: Optional[str] = None):
     """Return a LangChain ChatOpenAI instance pointed at the configured provider."""
     from langchain_openai import ChatOpenAI
 
-    model = model or _default_model()
+    model = model or _DEFAULT_MODEL
 
     # Prefer Ollama via its OpenAI-compatible /v1 endpoint
     urls = _ollama_urls()

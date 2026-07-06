@@ -27,23 +27,18 @@ _AGENTS = [
 
 
 def _route(state: Dict[str, Any]) -> str:
-    """Deterministic fallback — route to first unvisited step.
-
-    Uses key presence, not truthiness: an agent can legitimately return an
-    empty list/dict (e.g. no memories found for a new user), and a falsy
-    check would send the graph back to that same agent forever.
-    """
-    if "memory_context" not in state:
+    """Deterministic fallback — route to first unpopulated step."""
+    if not state.get("memory_context"):
         return "memory"
-    if "knowledge_graph" not in state:
+    if not state.get("knowledge_graph"):
         return "knowledge"
-    if "adjusted_level" not in state:
+    if not state.get("adjusted_level"):
         return "diagnostics"
-    if "strategy" not in state:
+    if not state.get("strategy"):
         return "planner"
-    if "exercises" not in state:
+    if not state.get("exercises"):
         return "exercise"
-    if "verification" not in state:
+    if not state.get("verification"):
         return "verifier"
     if state.get("verification", {}).get("verdict") == "needs_review":
         n_retries = state.get("n_retries") or {}

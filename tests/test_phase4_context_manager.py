@@ -49,52 +49,21 @@ def _doc(content: str, score: float = 0.8) -> dict:
 
 
 def test_filter_memories_same_support(mgr):
-    memories = [
-        {
-            "memory_type": "procedural",
-            "memory_metadata": {"support_id": "python"},
-            "created_at": datetime.utcnow().isoformat(),
-        }
-    ]
+    memories = [{"support": "python", "created_at": datetime.utcnow().isoformat()}]
     result = mgr.filter_memories(memories, support="python")
     assert len(result) == 1
 
 
 def test_filter_memories_no_support_kept(mgr):
-    memories = [
-        {
-            "memory_type": "procedural",
-            "memory_metadata": {"support_id": ""},
-            "created_at": datetime.utcnow().isoformat(),
-        }
-    ]
+    memories = [{"support": "", "created_at": datetime.utcnow().isoformat()}]
     result = mgr.filter_memories(memories, support="python")
     assert len(result) == 1
 
 
 def test_filter_memories_wrong_support_excluded(mgr):
-    memories = [
-        {
-            "memory_type": "procedural",
-            "memory_metadata": {"support_id": "java"},
-            "created_at": datetime.utcnow().isoformat(),
-        }
-    ]
+    memories = [{"support": "java", "created_at": datetime.utcnow().isoformat()}]
     result = mgr.filter_memories(memories, support="python")
     assert len(result) == 0
-
-
-def test_filter_memories_episodic_ignores_support(mgr):
-    """Personal/episodic facts aren't tied to a course topic — kept even on mismatch."""
-    memories = [
-        {
-            "memory_type": "episodic",
-            "memory_metadata": {"support_id": "java"},
-            "created_at": datetime.utcnow().isoformat(),
-        }
-    ]
-    result = mgr.filter_memories(memories, support="python")
-    assert len(result) == 1
 
 
 def test_filter_memories_recent_kept(mgr):
