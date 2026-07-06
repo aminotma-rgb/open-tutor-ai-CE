@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 def memory_node(state: Dict[str, Any]) -> Dict[str, Any]:
     user_id = state.get("user_id", "")
     support = state.get("support", "")
+    question = state.get("user_message", "")
     agent_trace = list(state.get("agent_trace") or [])
     agent_reasoning = dict(state.get("agent_reasoning") or {})
 
@@ -25,9 +26,15 @@ def memory_node(state: Dict[str, Any]) -> Dict[str, Any]:
         db = next(get_db())
         try:
             svc = ContextRetrievalService()
+            # No substring query here on purpose: retrieve_internal_memory does
+            # a literal ILIKE match, and a real question or topic name almost
+            # never appears verbatim inside a stored memory's content — passing
+            # either as `query` silently empties the candidate pool. Relevance
+            # judgment happens downstream in _llm_select(), which sees the
+            # actual question.
             raw = svc.retrieve_internal_memory(
                 user_id=user_id,
-                query=support,
+                query="",
                 memory_types=["episodic", "behavioral", "procedural"],
                 limit=20,
                 db=db,
@@ -36,10 +43,10 @@ def memory_node(state: Dict[str, Any]) -> Dict[str, Any]:
             filtered = mgr.filter_memories(raw, support=support)
 
             if filtered:
-                selected = _llm_select(filtered, support, state)
+                selected = _llm_select(filtered, question, support, state)
                 memories = selected if selected else filtered[:6]
 
-            memory_summary = "; ".join(m.get("content", "")[:80] for m in memories[:3])
+            memory_summary = "; ".join(m.get("content", "")[:200] for m in memories)
         finally:
             db.close()
     except Exception as exc:
@@ -58,7 +65,7 @@ def memory_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _llm_select(memories: list, support: str, state: Dict[str, Any]) -> list:
+def _llm_select(memories: list, question: str, support: str, state: Dict[str, Any]) -> list:
     from ai.llm.service import call_llm
 
     summaries = "\n".join(
@@ -66,10 +73,12 @@ def _llm_select(memories: list, support: str, state: Dict[str, Any]) -> list:
         for i, m in enumerate(memories)
     )
     prompt = (
+        f"Question actuelle de l'apprenant : {question or '(aucune question précise, session générale)'}\n"
         f"Support : {support}\n"
         f"Niveau : {state.get('current_level', '?')}\n\n"
         f"Mémoires disponibles :\n{summaries}\n\n"
-        f"Sélectionne les 4-6 indices les plus pertinents pour cette session.\n"
+        f"Sélectionne les 4-6 indices les plus pertinents pour répondre à la question ci-dessus "
+        f"ou, à défaut de question précise, pour personnaliser cette session.\n"
         f"Réponds uniquement avec les indices séparés par des virgules, ex : 0,2,4"
     )
     text = call_llm(prompt, max_tokens=50)

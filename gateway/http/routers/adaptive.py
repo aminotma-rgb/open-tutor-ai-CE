@@ -109,7 +109,11 @@ def run_adaptive_plan(
         if tutor_graph is None:
             final_state = _fallback_response(initial_state)
         else:
-            config = {"configurable": {"thread_id": session_id}}
+            # recursion_limit must comfortably exceed orchestrator.MAX_ITERATIONS * 2
+            # (orchestrator + agent per iteration) — LangGraph's default of 25 is
+            # lower than that worst case (15 * 2 = 30) and raises GraphRecursionError
+            # before the orchestrator's own ceiling ever gets a chance to fire.
+            config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
             final_state = tutor_graph.invoke(initial_state, config=config)
     except Exception as exc:
         log.error("tutor_graph.invoke failed: %s", exc)
@@ -553,7 +557,7 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
 
     memory_summary = state.get("memory_summary") or state.get("session_summary") or ""
     if memory_summary:
-        parts.append(f"PREVIOUS SESSION SUMMARY: {memory_summary[:400]}")
+        parts.append(f"KNOWN FACTS ABOUT THE LEARNER (use these to answer questions about their past): {memory_summary[:1200]}")
 
     decisions = state.get("strategy_decisions") or []
     if decisions:
@@ -745,7 +749,11 @@ async def adaptive_chat(
         if tutor_graph is None:
             final_state = _fallback_response(initial_state)
         else:
-            config = {"configurable": {"thread_id": session_id}}
+            # recursion_limit must comfortably exceed orchestrator.MAX_ITERATIONS * 2
+            # (orchestrator + agent per iteration) — LangGraph's default of 25 is
+            # lower than that worst case (15 * 2 = 30) and raises GraphRecursionError
+            # before the orchestrator's own ceiling ever gets a chance to fire.
+            config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
             final_state = await asyncio.to_thread(
                 tutor_graph.invoke, initial_state, config
             )

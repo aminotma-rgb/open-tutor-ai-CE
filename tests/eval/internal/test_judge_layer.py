@@ -6,13 +6,10 @@ Pour une mesure réelle, remplacer `offline_judge` par `llm_judge`.
     pytest tests/eval/test_judge_layer.py -v -s
 """
 
-from tests.eval.eval_judge import (
+from tests.eval.internal.eval_judge import (
     faithfulness,
     answer_relevancy,
     context_recall,
-    geval,
-    geval_pedagogy_full,
-    GEVAL_PEDAGOGY,
     offline_judge,
 )
 
@@ -60,35 +57,3 @@ def test_d2_context_recall():
     print(f"[D2] Context Recall                  = {score:.2f}")
     assert score >= 0.50, "Le contexte couvre la vérité-terrain → recall élevé."
 
-
-# ── Dimension 3 — G-Eval (grille pédagogique S7) ─────────────────────────────
-
-RESPONSE_BEGINNER = (
-    "Une boucle for, c'est simplement une façon de répéter une action. "
-    "Par exemple, pour dire bonjour 3 fois : for i in range(3): print('bonjour'). "
-    "Le range(3) veut dire 'fais-le 3 fois'."
-)
-
-
-def test_d3_geval_critere_unique():
-    score = geval(
-        GEVAL_PEDAGOGY["lisibilite"],
-        judge=offline_judge,
-        question=QUESTION,
-        reponse=RESPONSE_BEGINNER,
-    )
-    print(f"\n[D3] G-Eval lisibilité               = {score:.2f}")
-    assert 0.0 <= score <= 1.0
-
-
-def test_d3_geval_grille_complete():
-    scores = geval_pedagogy_full(
-        judge=offline_judge,
-        question=QUESTION,
-        reponse=RESPONSE_BEGINNER,
-    )
-    print("\n[D3] G-Eval grille pédagogique complète :")
-    for k, v in scores.items():
-        print(f"     {k:22s} = {v:.2f}")
-    assert "moyenne" in scores
-    assert 0.0 <= scores["moyenne"] <= 1.0

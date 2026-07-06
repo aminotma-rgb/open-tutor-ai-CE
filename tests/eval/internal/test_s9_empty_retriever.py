@@ -19,7 +19,7 @@ Méthode : automatisé pur.
 import pytest
 
 from ai.retrieval.context_retrieval import ContextRetrievalService
-from tests.eval.eval_judge import (
+from tests.eval.internal.eval_judge import (
     context_recall,
     faithfulness,
     recall_at_k,

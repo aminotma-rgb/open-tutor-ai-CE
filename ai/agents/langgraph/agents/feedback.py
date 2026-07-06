@@ -27,13 +27,17 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
     agent_reasoning = dict(state.get("agent_reasoning") or {})
 
     teaching_strategies_used = dict(state.get("teaching_strategies_used") or {})
+    messages = list(state.get("messages") or [])
 
     from ai.agents.helpers import _self_critique
 
     # LLM decides what to memorise — enriched with session performance stats
+    # and the raw conversation, so it can also capture personal/contextual
+    # facts the learner mentioned (not just pedagogical session metadata).
     memories_to_save = _llm_decide_memories(
         support, exercises, adj_level, strategy, first_name,
         answer_history=answer_history,
+        messages=messages,
     )
 
     # Self-critique
@@ -92,6 +96,7 @@ def _llm_decide_memories(
     strategy: str,
     first_name: str = "apprenant",
     answer_history: list = None,
+    messages: list = None,
 ) -> List[Dict[str, Any]]:
     from ai.llm.service import call_llm
 
@@ -103,22 +108,48 @@ def _llm_decide_memories(
         if history else "aucun échange vérifié cette session"
     )
 
+    # -20 covers a full session's worth of turns (production/eval sessions run
+    # ~10-15 turns) rather than just the last few lines, so a personal fact
+    # mentioned early in the session isn't cut off before the LLM sees it.
+    recent_turns = messages or []
+    conversation_excerpt = "\n".join(
+        f"{m.get('role', '?')}: {m.get('content', '')[:200]}" for m in recent_turns[-20:]
+    )
+    conversation_section = (
+        f"Échanges de la conversation :\n{conversation_excerpt}\n\n"
+        if conversation_excerpt else ""
+    )
+
     prompt = (
         f"Session d'apprentissage terminée pour {first_name} : support={support}, niveau={level}\n"
         f"Performance de la session : {session_perf}\n"
         f"Stratégie suivie par {first_name} : {strategy[:200]}\n"
-        f"Exercices générés : {len(exercises)}\n\n"
+        f"Exercices générés : {len(exercises)}\n"
+        f"{conversation_section}"
         f"Décide quelles informations mémoriser sur {first_name} (2-4 entrées, importance : high/medium).\n"
-        f"Inclus la performance ({session_perf}) dans une entrée episodic si notable.\n"
+        f"Retiens à la fois :\n"
+        f"- des faits pédagogiques (stratégie, niveau, performance) — inclus la performance ({session_perf}) si notable\n"
+        f"- des faits personnels/contextuels mentionnés par {first_name} dans la conversation (centres d'intérêt, "
+        f"événements de vie, ou tout autre détail factuel), qui pourraient aider à personnaliser de futurs "
+        f"exercices ou à répondre à une question future — utilise le type \"episodic\" pour ceux-ci\n"
+        f"IMPORTANT : le champ \"type\" doit être EXACTEMENT l'une de ces trois valeurs, quelle que soit la nature "
+        f"de l'information (pédagogique ou personnelle) : \"behavioral\", \"episodic\", ou \"procedural\".\n"
         f"Réponds en JSON :\n"
         f'[{{"type": "behavioral|episodic|procedural", "content": "...", "importance": "high|medium"}}]'
     )
     text = call_llm(prompt, max_tokens=400)
+    valid_types = {"behavioral", "episodic", "procedural"}
     if text and "[" in text:
         try:
             start = text.index("[")
             end = text.rindex("]") + 1
             memories = json.loads(text[start:end])
+            for m in memories:
+                # The LLM occasionally invents a type outside the schema (e.g.
+                # "contextual") — such entries would silently never be retrieved,
+                # since memory_node only queries for the 3 valid types below.
+                if m.get("type") not in valid_types:
+                    m["type"] = "episodic"
             return [m for m in memories if m.get("importance") in ("high", "medium")]
         except Exception:
             pass

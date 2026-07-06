@@ -30,7 +30,16 @@ def _verify_learner_answer(
     )
 
     # ── Method 1 : Python arithmetic ──────────────────────────────────────────
-    match = re.search(r"([\d\s\+\-\*\/\(\)\.]+)\s*=\s*([\d\.]+)", normalised)
+    # Only for near-bare expressions. On prose with several sentences, the regex
+    # can grab an unrelated "= number" fragment (e.g. mid-explanation) and eval()
+    # it out of context, producing a confidently wrong verdict instead of falling
+    # through to the LLM judge (Method 2) which handles natural language correctly.
+    prose_words = re.findall(r"[A-Za-z]{2,}", user_message)
+    match = (
+        re.search(r"([\d\s\+\-\*\/\(\)\.]+)\s*=\s*([\d\.]+)", normalised)
+        if len(prose_words) <= 3
+        else None
+    )
     if match:
         expression = match.group(1).strip()
         learner_str = match.group(2).strip()

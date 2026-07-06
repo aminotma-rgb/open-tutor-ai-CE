@@ -1,4 +1,4 @@
-"""Couche d'évaluation par juge LLM (RAGAS-style + G-Eval) pour OpenTutorAI CE.
+"""Couche d'évaluation par juge LLM (RAGAS-style) pour OpenTutorAI CE.
 
 Ce module remplace les `judge_fn` stubbés (S0) par de vraies métriques calculées
 par un juge LLM, en réutilisant le point d'entrée LLM du dépôt :
@@ -7,14 +7,11 @@ par un juge LLM, en réutilisant le point d'entrée LLM du dépôt :
 Aucune clé API externe n'est requise : le module passe par le routing multi-provider
 déjà configuré (Mistral local par défaut). Compatible avec les restrictions réseau.
 
-Trois familles de métriques :
-  Dimension 2 (Qualité du contenu — style RAGAS) :
+Métriques disponibles (Dimension 2 — style RAGAS) :
     - recall_at_k(relevant_ids, retrieved_ids) : métrique retriever — documents pertinents dans top-k
     - faithfulness(answer, contexts)           : A_ancrées / A_total          (cible ≥ 0,90)
     - answer_relevancy(question, answer)        : pertinence réponse↔question   (cible ≥ 0,80)
     - context_recall(ground_truth, contexts)   : couverture du contexte assemblé (cible ≥ 0,80)
-  Dimension 3 (Qualité pédagogique — style G-Eval) :
-    - geval(criteria, **inputs)                : score 1–5 sur critère libre
 
   NB: recall_at_k et context_recall mesurent deux étapes distinctes du pipeline RAG.
       recall_at_k = qualité du retriever (documents récupérés).
@@ -25,7 +22,7 @@ Mode déterministe pour les tests :
   en CI. Passer `judge=llm_judge` pour une mesure réelle.
 
 Usage minimal :
-    from tests.eval.eval_judge import faithfulness, llm_judge, offline_judge
+    from tests.eval.internal.eval_judge import faithfulness, llm_judge, offline_judge
 
     score = faithfulness(answer, contexts, judge=llm_judge)      # mesure réelle
     score = faithfulness(answer, contexts, judge=offline_judge)  # CI déterministe
@@ -79,10 +76,9 @@ def llm_judge(prompt: str) -> Optional[str]:
 def offline_judge(prompt: str) -> Optional[str]:
     """Juge déterministe pour CI — heuristique lexicale, aucun LLM.
 
-    Trois chemins selon la structure du prompt :
+    Deux chemins selon la structure du prompt :
     - faithfulness   : AFFIRMATION présente → verdict yes/no par recouvrement contenu.
     - context_recall : RÉFÉRENCE présente   → score [0-1] par recouvrement sémantique.
-    - G-Eval         : CRITÈRE + REPONSE   → score [1-5] discriminant par critère pédagogique.
     """
     # Chemin faithfulness : AFFIRMATION présente (contexte peut être vide → overlap 0).
     claim = _extract_field(prompt, "AFFIRMATION")
@@ -101,14 +97,7 @@ def offline_judge(prompt: str) -> Optional[str]:
         overlap = _content_overlap(ref, sources)
         return json.dumps({"score": round(overlap, 2)})
 
-    # Chemin G-Eval : CRITÈRE + REPONSE → score 1-5 discriminant (pas de score fixe).
-    criteria = _extract_field(prompt, "CRITÈRE")
-    reponse = _extract_field(prompt, "REPONSE") or _extract_field(prompt, "RÉPONSE")
-    if criteria and reponse:
-        score = _geval_heuristic(criteria, reponse)
-        return json.dumps({"score": score, "raison": "offline heuristic"})
-
-    # Fallback : score neutre 3 — seul _parse_score_1_5 l'utilise (→ 0.5 normalisé).
+    # Fallback : score neutre 3 — _parse_score_1_5 l'utilise (→ 0.5 normalisé).
     return json.dumps({"score": 3, "raison": "offline heuristic — champs non reconnus"})
 
 
@@ -207,132 +196,8 @@ def context_recall(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Dimension 3 — G-Eval (critères pédagogiques libres)
-# ──────────────────────────────────────────────────────────────────────────────
-
-# Critères correspondant à la grille humaine S7 (4 × 25 %).
-GEVAL_PEDAGOGY = {
-    "lisibilite": "L'explication est lisible et compréhensible sans jargon non expliqué.",
-    "pertinence_exemple": "L'exemple proposé illustre clairement le concept enseigné.",
-    "absence_jargon": "La réponse évite le jargon technique non défini pour le niveau.",
-    "adaptation_niveau": "Le ton et la complexité sont adaptés au niveau de l'apprenant.",
-}
-
-
-def geval(
-    criteria: str,
-    *,
-    judge: Judge = offline_judge,
-    **inputs: str,
-) -> float:
-    """G-Eval — note une sortie sur un critère décrit en langage naturel (1–5 → [0,1]).
-
-    Exemple :
-        geval(GEVAL_PEDAGOGY["lisibilite"], judge=llm_judge,
-              question=q, reponse=r)
-
-    Le juge reçoit le critère + les entrées nommées et produit un score motivé.
-    """
-    fields = "\n".join(f"{k.upper()}: {v}" for k, v in inputs.items())
-    prompt = (
-        "Tu es un évaluateur pédagogique rigoureux. Évalue la sortie selon le "
-        "CRITÈRE ci-dessous, étape par étape, puis attribue une note.\n\n"
-        f"CRITÈRE: {criteria}\n\n"
-        f"{fields}\n\n"
-        'Réponds UNIQUEMENT en JSON : {"score": <1-5>, "raison": "<courte>"}'
-    )
-    return _parse_score_1_5(
-        judge(prompt),
-        question=inputs.get("question", ""),
-        answer=inputs.get("reponse", inputs.get("answer", "")),
-    )
-
-
-def geval_pedagogy_full(
-    *,
-    judge: Judge = offline_judge,
-    **inputs: str,
-) -> dict:
-    """Applique les 4 critères de la grille S7 et renvoie scores + moyenne.
-
-    Renvoie {"lisibilite": .., ..., "moyenne": ..} — directement comparable à la
-    note humaine ≥ 4/5 (soit ≥ 0,80 normalisé).
-    """
-    scores = {
-        name: geval(desc, judge=judge, **inputs)
-        for name, desc in GEVAL_PEDAGOGY.items()
-    }
-    scores["moyenne"] = sum(scores.values()) / len(GEVAL_PEDAGOGY)
-    return scores
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Helpers de parsing / heuristiques
 # ──────────────────────────────────────────────────────────────────────────────
-
-def _geval_heuristic(criteria: str, reponse: str) -> int:
-    """Score 1–5 discriminant par critère pédagogique — sans LLM.
-
-    Quatre critères reconnus (GEVAL_PEDAGOGY) → heuristiques spécifiques.
-    Fallback neutre 3 si le critère est inconnu.
-    """
-    c = criteria.lower()
-    r = reponse.lower()
-    words = re.findall(r"\w+", r)
-    if not words:
-        return 1
-
-    # Lisibilité : phrases courtes + peu de mots très longs (≥ 12 lettres).
-    if "lisib" in c or "compréhensib" in c:
-        sentences = [s for s in re.split(r"[.!?]+", reponse.strip()) if s.strip()]
-        avg_len = sum(len(re.findall(r"\w+", s)) for s in sentences) / max(len(sentences), 1)
-        long_ratio = sum(1 for w in words if len(w) >= 12) / len(words)
-        if avg_len <= 20 and long_ratio < 0.05:
-            return 5
-        if avg_len <= 30 and long_ratio < 0.10:
-            return 4
-        if avg_len <= 40:
-            return 3
-        return 2
-
-    # Pertinence d'exemple : présence d'un exemple concret (code ou marqueur explicite).
-    if "exemple" in c or "illustre" in c:
-        has_marker = any(kw in r for kw in ["exemple", "par exemple", "voici"])
-        has_code = bool(re.search(r"\d|`|for |range|print|def |=", r))
-        if has_marker and has_code:
-            return 5
-        if has_marker or has_code:
-            return 4
-        return 2
-
-    # Absence de jargon : faible ratio de mots techniques longs (≥ 9 lettres).
-    if "jargon" in c or "technique" in c:
-        tech_ratio = sum(1 for w in words if len(w) >= 9) / len(words)
-        if tech_ratio < 0.05:
-            return 5
-        if tech_ratio < 0.10:
-            return 4
-        if tech_ratio < 0.15:
-            return 3
-        return 2
-
-    # Adaptation au niveau : marqueurs pédagogiques de simplification.
-    if "adapt" in c or "niveau" in c or "complexit" in c or "ton" in c:
-        markers = [
-            "simplement", "c'est-à-dire", "veut dire", "autrement dit",
-            "en d'autres termes", "c'est ", "facile", "basique",
-        ]
-        found = sum(1 for m in markers if m in r)
-        if found >= 3:
-            return 5
-        if found >= 2:
-            return 4
-        if found >= 1:
-            return 3
-        return 2
-
-    return 3  # critère non reconnu → score neutre
-
 
 def _split_claims(text: str) -> List[str]:
     """Découpe une réponse en affirmations atomiques (phrases non vides)."""

@@ -162,6 +162,9 @@ exclude = [
 [tool.pytest.ini_options]
 addopts = "-q --tb=short"
 testpaths = ["tests"]
+markers = [
+    "external: tests avec appels LLM réels sur datasets externes — exclus de la CI rapide (désélectionner avec -m 'not external')",
+]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
