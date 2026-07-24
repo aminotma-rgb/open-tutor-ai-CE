@@ -65,7 +65,9 @@ def memory_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _llm_select(memories: list, question: str, support: str, state: Dict[str, Any]) -> list:
+def _llm_select(
+    memories: list, question: str, support: str, state: Dict[str, Any]
+) -> list:
     from ai.llm.service import call_llm
 
     summaries = "\n".join(
@@ -81,7 +83,7 @@ def _llm_select(memories: list, question: str, support: str, state: Dict[str, An
         f"ou, à défaut de question précise, pour personnaliser cette session.\n"
         f"Réponds uniquement avec les indices séparés par des virgules, ex : 0,2,4"
     )
-    text = call_llm(prompt, max_tokens=50)
+    text = call_llm(prompt, model=state.get("model"), max_tokens=50)
     if text:
         try:
             indices = [

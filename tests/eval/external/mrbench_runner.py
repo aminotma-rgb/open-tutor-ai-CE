@@ -1,8 +1,14 @@
 """Harness MRBench — évalue la qualité pédagogique de correction d'erreurs (D3).
 
-Évalue la réponse du système sur 4 axes issus du benchmark MRBench V2
+Évalue la réponse du système sur 5 axes issus du benchmark MRBench V2
 (Bridge + MathDial) :
-    mistake_identification, mistake_location, guidance, actionability
+    mistake_identification, mistake_location, guidance, actionability,
+    revealing_of_answer
+
+Métrique fidèle au papier (Maurya et al. 2025, §5.4) : DAMR (Desired
+Annotation Match Rate) — pourcentage de réponses dont le verdict du juge
+correspond exactement au label désiré (Table 2/4). Pas de pondération
+partielle sur "to some extent" (voir score_axis()).
 
 Le dataset est pré-normalisé par scripts/sample_mrbench.py. Format attendu :
     id, source, context (liste de {role, content}), student_error_turn
@@ -23,13 +29,32 @@ RESULTS_PATH = os.path.join(
     os.path.dirname(__file__), "results", "mrbench_results.json"
 )
 
-AXES = ["mistake_identification", "mistake_location", "guidance", "actionability"]
+AXES = [
+    "mistake_identification",
+    "mistake_location",
+    "guidance",
+    "actionability",
+    "revealing_of_answer",
+]
 
 _AXIS_PROMPTS = {
     "mistake_identification": "Le tuteur identifie-t-il clairement qu'une erreur a été commise par l'étudiant ?",
     "mistake_location": "Le tuteur localise-t-il précisément où se trouve l'erreur dans le raisonnement de l'étudiant ?",
     "guidance": "Le tuteur fournit-il une guidance pédagogique utile pour corriger l'erreur ?",
     "actionability": "La réponse du tuteur permet-elle à l'étudiant de savoir concrètement quoi faire ensuite ?",
+    "revealing_of_answer": "Le tuteur révèle-t-il la réponse finale à l'étudiant (que celle-ci soit correcte ou incorrecte), au lieu de le guider vers sa propre correction ?",
+}
+
+# Label désiré par axe (Table 2/4, Maurya et al. 2025). Les 4 premiers axes ont
+# "Yes" comme Desiderata ; revealing_of_answer est le seul où le comportement
+# souhaité est l'absence de révélation ("No") — un tuteur qui donne la réponse
+# court-circuite l'apprentissage actif (cf. principe 1, §4 du papier).
+_DESIRED_VERDICT = {
+    "mistake_identification": "yes",
+    "mistake_location": "yes",
+    "guidance": "yes",
+    "actionability": "yes",
+    "revealing_of_answer": "no",
 }
 
 
@@ -83,13 +108,35 @@ def generate_response(dialogue: dict, graph) -> str:
 def score_axis(
     axis: str, context: str, student_turn: str, response: str, judge
 ) -> float:
+    """Desired Annotation Match Rate (DAMR) pour un axe — Maurya et al. 2025, §5.4.
+
+    Le papier ne pondère pas les verdicts intermédiaires : DAMR est le
+    pourcentage de réponses dont le verdict correspond exactement au label
+    désiré (Table 2/4). "to some extent" ne vaut donc pas un demi-point — c'est
+    un non-match au même titre que "no", sans quoi le score cesserait de
+    représenter un taux de correspondance et deviendrait une moyenne pondérée.
+    """
     criterion = _AXIS_PROMPTS[axis]
+    # Cadrage anti-complaisance (2026-07-10) : la calibration F1 (docs/F1_judge.md)
+    # a mesuré que ce juge (mistral:7b-instruct-q4_K_M) sur-prédit systématiquement
+    # "yes" (F1≈0,32) et écrase presque toujours "to some extent" vers "yes". Le
+    # raisonnement explicite avant verdict + la consigne sceptique visent
+    # directement ce biais diagnostiqué, sans changer de modèle ni d'infra.
     prompt = (
         f"CONTEXTE_DIALOGUE: {context}\n"
         f"TOUR_ÉTUDIANT_À_ÉVALUER: {student_turn}\n"
         f"RÉPONSE_TUTEUR: {response}\n\n"
-        f"Critère d'évaluation : {criterion}\n"
-        'Réponds en JSON : {"verdict": "yes"|"to some extent"|"no"}'
+        f"Critère d'évaluation : {criterion}\n\n"
+        'Sois strict et sceptique : ne réponds "yes" que si le critère est '
+        "indiscutablement et entièrement rempli. Avant de conclure, identifie "
+        "explicitement ce qui manquerait pour que ce ne soit PAS un \"yes\" "
+        "(ambiguïté, information partielle, formulation vague). Utilise "
+        '"to some extent" chaque fois que le critère n\'est que partiellement '
+        "ou implicitement rempli — ne l'écrase pas artificiellement vers "
+        '"yes" par complaisance.\n\n'
+        "Réponds en JSON, raisonnement avant verdict : "
+        '{"raisonnement": "<ce qui justifie ou limite le verdict, 1-2 phrases>", '
+        '"verdict": "yes"|"to some extent"|"no"}'
     )
     result = judge(prompt)
     if not result:
@@ -99,7 +146,7 @@ def score_axis(
         verdict = json.loads(result[start:end]).get("verdict", "no").lower()
     except Exception:
         return 0.0
-    return {"yes": 1.0, "to some extent": 0.5, "no": 0.0}.get(verdict, 0.0)
+    return 1.0 if verdict == _DESIRED_VERDICT[axis] else 0.0
 
 
 def run_mrbench(judge=None):

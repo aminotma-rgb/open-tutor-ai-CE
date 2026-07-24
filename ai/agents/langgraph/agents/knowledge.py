@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 
 def _infer_prerequisites_from_rag(
-    rag_docs: list, support: str
+    rag_docs: list, support: str, model: str = None
 ) -> List[Tuple[str, str]]:
     """Ask the LLM to extract prerequisite pairs from RAG docs or general knowledge.
 
@@ -29,7 +29,7 @@ def _infer_prerequisites_from_rag(
             f"Contenu :\n{corpus}\n\n"
             f"Identifie les relations de prérequis entre les concepts du cours. "
             f"Une relation [A, B] signifie 'pour apprendre A il faut d'abord maîtriser B'.\n"
-            f"Exemple : [[\"division\", \"multiplication\"], [\"fractions\", \"division\"]]\n\n"
+            f'Exemple : [["division", "multiplication"], ["fractions", "division"]]\n\n'
             f"Réponds UNIQUEMENT avec un tableau JSON de paires, sans explication."
         )
     else:
@@ -37,11 +37,11 @@ def _infer_prerequisites_from_rag(
             f"Tu es un expert pédagogique. "
             f"Liste les relations de prérequis pédagogiques standards pour un cours sur '{support}'.\n"
             f"Une relation [A, B] signifie 'pour apprendre A il faut d'abord maîtriser B'.\n"
-            f"Exemple : [[\"division\", \"multiplication\"], [\"fractions\", \"division\"]]\n\n"
+            f'Exemple : [["division", "multiplication"], ["fractions", "division"]]\n\n'
             f"Réponds UNIQUEMENT avec un tableau JSON de paires, sans explication."
         )
 
-    result = call_llm(prompt, max_tokens=400)
+    result = call_llm(prompt, model=model, max_tokens=400)
     if not result:
         return []
 
@@ -54,8 +54,11 @@ def _infer_prerequisites_from_rag(
         return [
             (str(p[0]).strip(), str(p[1]).strip())
             for p in pairs
-            if isinstance(p, (list, tuple)) and len(p) == 2
-            and p[0] and p[1] and p[0] != p[1]
+            if isinstance(p, (list, tuple))
+            and len(p) == 2
+            and p[0]
+            and p[1]
+            and p[0] != p[1]
         ]
     except Exception:
         return []
@@ -97,7 +100,9 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
             # ── Step 2: infer prerequisite relations if none exist yet ────────
             inferred_count = 0
             if not kg_svc.has_requires_relations(support, db) and support:
-                pairs = _infer_prerequisites_from_rag(rag_docs, support)
+                pairs = _infer_prerequisites_from_rag(
+                    rag_docs, support, model=state.get("model")
+                )
                 for source, target in pairs:
                     try:
                         kg_svc.add_relation(db, source, target, "requires", support)
@@ -130,7 +135,9 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         seen.add(gap)
 
             # ── Step 3b: build concept_levels from mastery scores ────────────
-            all_concepts = db.query(KGConcept).filter(KGConcept.support == support).all()
+            all_concepts = (
+                db.query(KGConcept).filter(KGConcept.support == support).all()
+            )
             for c in all_concepts:
                 row = (
                     db.query(KGUserMastery)

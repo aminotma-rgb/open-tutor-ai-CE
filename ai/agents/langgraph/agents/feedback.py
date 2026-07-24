@@ -35,9 +35,14 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # and the raw conversation, so it can also capture personal/contextual
     # facts the learner mentioned (not just pedagogical session metadata).
     memories_to_save = _llm_decide_memories(
-        support, exercises, adj_level, strategy, first_name,
+        support,
+        exercises,
+        adj_level,
+        strategy,
+        first_name,
         answer_history=answer_history,
         messages=messages,
+        model=state.get("model"),
     )
 
     # Self-critique
@@ -70,9 +75,13 @@ def feedback_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
     if should_save and user_id:
         _persist_memories(user_id, support, memories_to_save)
-        _update_kg_mastery(user_id, support, weak_concepts, exercises, answer_history=answer_history)
+        _update_kg_mastery(
+            user_id, support, weak_concepts, exercises, answer_history=answer_history
+        )
         if teaching_strategies_used:
-            _persist_strategy_outcomes(user_id, support, teaching_strategies_used, answer_history)
+            _persist_strategy_outcomes(
+                user_id, support, teaching_strategies_used, answer_history
+            )
 
     agent_reasoning["feedback"] = (
         f"[LLM] {len(memories_to_save)} memories, saved={should_save}"
@@ -97,6 +106,7 @@ def _llm_decide_memories(
     first_name: str = "apprenant",
     answer_history: list = None,
     messages: list = None,
+    model: str = None,
 ) -> List[Dict[str, Any]]:
     from ai.llm.service import call_llm
 
@@ -105,7 +115,8 @@ def _llm_decide_memories(
     wrong_count = sum(1 for v in history if v.get("correct") is False)
     session_perf = (
         f"{correct_count} bonne(s) réponse(s), {wrong_count} erreur(s) sur {len(history)} échanges vérifiés"
-        if history else "aucun échange vérifié cette session"
+        if history
+        else "aucun échange vérifié cette session"
     )
 
     # -20 covers a full session's worth of turns (production/eval sessions run
@@ -113,11 +124,13 @@ def _llm_decide_memories(
     # mentioned early in the session isn't cut off before the LLM sees it.
     recent_turns = messages or []
     conversation_excerpt = "\n".join(
-        f"{m.get('role', '?')}: {m.get('content', '')[:200]}" for m in recent_turns[-20:]
+        f"{m.get('role', '?')}: {m.get('content', '')[:200]}"
+        for m in recent_turns[-20:]
     )
     conversation_section = (
         f"Échanges de la conversation :\n{conversation_excerpt}\n\n"
-        if conversation_excerpt else ""
+        if conversation_excerpt
+        else ""
     )
 
     prompt = (
@@ -131,13 +144,13 @@ def _llm_decide_memories(
         f"- des faits pédagogiques (stratégie, niveau, performance) — inclus la performance ({session_perf}) si notable\n"
         f"- des faits personnels/contextuels mentionnés par {first_name} dans la conversation (centres d'intérêt, "
         f"événements de vie, ou tout autre détail factuel), qui pourraient aider à personnaliser de futurs "
-        f"exercices ou à répondre à une question future — utilise le type \"episodic\" pour ceux-ci\n"
-        f"IMPORTANT : le champ \"type\" doit être EXACTEMENT l'une de ces trois valeurs, quelle que soit la nature "
-        f"de l'information (pédagogique ou personnelle) : \"behavioral\", \"episodic\", ou \"procedural\".\n"
+        f'exercices ou à répondre à une question future — utilise le type "episodic" pour ceux-ci\n'
+        f'IMPORTANT : le champ "type" doit être EXACTEMENT l\'une de ces trois valeurs, quelle que soit la nature '
+        f'de l\'information (pédagogique ou personnelle) : "behavioral", "episodic", ou "procedural".\n'
         f"Réponds en JSON :\n"
         f'[{{"type": "behavioral|episodic|procedural", "content": "...", "importance": "high|medium"}}]'
     )
-    text = call_llm(prompt, max_tokens=400)
+    text = call_llm(prompt, model=model, max_tokens=400)
     valid_types = {"behavioral", "episodic", "procedural"}
     if text and "[" in text:
         try:
@@ -283,9 +296,7 @@ def _update_kg_mastery(
     The aggregated delta is applied once to each exercised concept.
     Concepts present but not exercised receive a small exposure bump (+0.02).
     """
-    exercised = {
-        e.get("skill_target", "") for e in exercises if e.get("skill_target")
-    }
+    exercised = {e.get("skill_target", "") for e in exercises if e.get("skill_target")}
     all_concepts = list(dict.fromkeys(list(weak_concepts) + list(exercised)))
     if not all_concepts:
         return
@@ -303,9 +314,7 @@ def _update_kg_mastery(
             session_delta -= 0.05
             # Keep the most recent wrong answer as last_error
             if v.get("learner_answer") and v.get("correct_answer"):
-                last_error = (
-                    f"{v['learner_answer']} → attendu : {v['correct_answer']}"
-                )
+                last_error = f"{v['learner_answer']} → attendu : {v['correct_answer']}"
         else:
             session_delta += 0.02
 
@@ -323,7 +332,11 @@ def _update_kg_mastery(
             for concept in all_concepts:
                 delta = session_delta if concept in exercised else 0.02
                 kg_svc.update_mastery(
-                    db, user_id, concept, support, delta,
+                    db,
+                    user_id,
+                    concept,
+                    support,
+                    delta,
                     last_error=last_error if concept in exercised else None,
                 )
             db.commit()

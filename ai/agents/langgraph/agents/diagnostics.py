@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 def _detect_error_patterns(
     blocked_concepts: List[Dict[str, Any]],
     answer_history: List[Dict[str, Any]],
+    model: str = None,
 ) -> Dict[str, Dict]:
     """Detect systematic error patterns for blocked concepts using LLM analysis.
 
@@ -57,7 +58,7 @@ def _detect_error_patterns(
         f'{{"nom_du_concept": {{"pattern": "...", "hypothesis": "...", "severity": "mild|moderate|severe"}}}}'
     )
 
-    result = call_llm(prompt, max_tokens=300)
+    result = call_llm(prompt, model=model, max_tokens=300)
     if not result:
         return {}
 
@@ -118,7 +119,11 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # Deterministic baseline
     adj_level = assess_current_level(current_level, interactions, human_feedback)
     difficulties = detect_difficulties(
-        support, interactions, human_feedback, objectives, session_summary=session_summary
+        support,
+        interactions,
+        human_feedback,
+        objectives,
+        session_summary=session_summary,
     )
     difficulties += extract_memory_signals(support, memory_context)
 
@@ -127,18 +132,23 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
         label = (
             f"Blocage persistant : {bc['concept']} "
             f"({bc['attempts']} tentatives sans progrès"
-            + (f", dernière erreur : {bc['last_error']}" if bc.get("last_error") else "")
+            + (
+                f", dernière erreur : {bc['last_error']}"
+                if bc.get("last_error")
+                else ""
+            )
             + ")"
         )
         if label not in difficulties:
             difficulties.insert(0, label)
 
     # ── Priority 2 : error patterns (LLM analysis of answer_history) ─────────
-    error_patterns = _detect_error_patterns(blocked_concepts, answer_history)
+    error_patterns = _detect_error_patterns(
+        blocked_concepts, answer_history, model=state.get("model")
+    )
     for concept, info in error_patterns.items():
-        label = (
-            f"Pattern d'erreur sur '{concept}' : {info['pattern']}"
-            + (f" — hypothèse : {info['hypothesis']}" if info.get("hypothesis") else "")
+        label = f"Pattern d'erreur sur '{concept}' : {info['pattern']}" + (
+            f" — hypothèse : {info['hypothesis']}" if info.get("hypothesis") else ""
         )
         if label not in difficulties:
             difficulties.insert(1, label)
@@ -164,9 +174,21 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
         f"Niveau heuristique : {adj_level} (historique mémorisé : {current_level})\n"
         f"IMPORTANT : si {first_name} se déclare explicitement débutant/novice dans son message, prioritise cette déclaration sur l'historique.\n"
         f"Concepts faibles (KG) : {weak_concepts}\n"
-        + (f"BLOCAGES CHRONIQUES (≥5 tentatives sans progrès) : {blocked_names}\n" if blocked_names else "")
-        + (f"PATTERNS D'ERREUR DÉTECTÉS : {json.dumps(error_patterns, ensure_ascii=False)[:200]}\n" if error_patterns else "")
-        + (f"PRÉREQUIS MANQUANTS : {prerequisite_gaps[:3]}\n" if prerequisite_gaps else "")
+        + (
+            f"BLOCAGES CHRONIQUES (≥5 tentatives sans progrès) : {blocked_names}\n"
+            if blocked_names
+            else ""
+        )
+        + (
+            f"PATTERNS D'ERREUR DÉTECTÉS : {json.dumps(error_patterns, ensure_ascii=False)[:200]}\n"
+            if error_patterns
+            else ""
+        )
+        + (
+            f"PRÉREQUIS MANQUANTS : {prerequisite_gaps[:3]}\n"
+            if prerequisite_gaps
+            else ""
+        )
         + f"Dernier message de {first_name} : {interactions[:300]}\n"
         + (f"Échanges récents :\n{recent_context}\n" if recent_context else "")
         + f"Résumé sessions précédentes : {session_summary[:400]}\n"
@@ -174,7 +196,7 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
         f"Identifie le niveau réel (beginner/intermediate/advanced) et liste 3-5 difficultés spécifiques.\n"
         f'Réponds UNIQUEMENT en JSON : {{"level": "...", "difficulties": ["...", "..."], "reasoning": "..."}}'
     )
-    llm_text = call_llm(prompt, max_tokens=300)
+    llm_text = call_llm(prompt, model=state.get("model"), max_tokens=300)
     if llm_text:
         try:
             start = llm_text.index("{")
@@ -188,14 +210,20 @@ def diagnostics_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 difficulties = llm_diff[:6]
             agent_reasoning["diagnostics"] = (
                 f"[LLM] level={adj_level} — {data.get('reasoning','')[:80]}"
-                + (f" | patterns: {list(error_patterns.keys())}" if error_patterns else "")
+                + (
+                    f" | patterns: {list(error_patterns.keys())}"
+                    if error_patterns
+                    else ""
+                )
             )
         except Exception:
             agent_reasoning["diagnostics"] = f"[fallback] level={adj_level}"
     else:
         agent_reasoning["diagnostics"] = f"[fallback] level={adj_level}"
 
-    _self_critique("diagnostics", f"level={adj_level}, difficulties={difficulties}", state)
+    _self_critique(
+        "diagnostics", f"level={adj_level}, difficulties={difficulties}", state
+    )
 
     if not human_feedback:
         human_feedback = interrupt(

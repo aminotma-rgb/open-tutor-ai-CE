@@ -76,7 +76,7 @@ def _llm_route(state: Dict[str, Any]) -> Optional[str]:
         f'{{ "next_agent": "<nom>", "reasoning": "<explication courte>", "confidence": 0.0 }}'
     )
 
-    text = call_llm(prompt, max_tokens=150)
+    text = call_llm(prompt, model=state.get("model"), max_tokens=150)
     if not text:
         return None
     try:
@@ -100,9 +100,37 @@ def _llm_route(state: Dict[str, Any]) -> Optional[str]:
 
 def orchestrator_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Increment iteration, route via LLM then fallback, enforce ceiling."""
-    iteration = (state.get("iteration") or 0) + 1
+    incoming_iteration = state.get("iteration") or 0
+    iteration = incoming_iteration + 1
     agent_trace = list(state.get("agent_trace") or [])
     agent_reasoning = dict(state.get("agent_reasoning") or {})
+
+    # feedback_node is the only agent that proactively signals completion
+    # (it returns next_agent="END"). Without this check, every orchestrator
+    # call unconditionally recomputed a fresh routing decision and silently
+    # discarded that signal, so the graph could never terminate on its own —
+    # it always ran until MAX_ITERATIONS forced a stop, even right after a
+    # session had already finished (confirmed via LoCoMo diagnostic: 3/3
+    # sessions hit the hard ceiling despite every structured field already
+    # being populated).
+    #
+    # Guarded by incoming_iteration > 0: "next_agent" has no reducer on this
+    # TypedDict state, so it persists in the checkpointed state across
+    # invoke() calls. Every caller (production adaptive_chat() and all eval
+    # runners) resets "iteration" to 0 on every fresh invoke(), so seeing
+    # incoming_iteration == 0 here means any next_agent="END" present is a
+    # stale leftover from the END of the *previous* invoke, not a real
+    # signal for this one — respecting it unconditionally would short-
+    # circuit every subsequent invoke on the same thread without doing any
+    # work.
+    if incoming_iteration > 0 and state.get("next_agent") == "END":
+        agent_trace.append("[END] feedback signalled session completion")
+        return {
+            "next_agent": "END",
+            "iteration": iteration,
+            "agent_trace": agent_trace,
+            "agent_reasoning": agent_reasoning,
+        }
 
     if iteration > MAX_ITERATIONS:
         agent_trace.append(f"[STOP] Max iterations ({MAX_ITERATIONS}) reached")
@@ -127,6 +155,18 @@ def orchestrator_node(state: Dict[str, Any]) -> Dict[str, Any]:
     next_agent: Optional[str] = None
     if use_llm:
         next_agent = _llm_route(state)
+        if next_agent == "planner":
+            # _llm_route()'s prompt tells it to respect the same n_retries<3
+            # cap that _route()'s deterministic fallback enforces below, but
+            # a 7B model doesn't reliably follow that instruction — confirmed
+            # via a real LoCoMo run reaching "planner → retry #6" before the
+            # hard MAX_ITERATIONS ceiling had to intervene. Validate here
+            # instead of trusting the prompt: discard the LLM's decision so
+            # next_agent falls through to _route(), whose retry cap is
+            # enforced in code, not by LLM compliance.
+            n_retries = state.get("n_retries") or {}
+            if n_retries.get("planner", 0) >= 3:
+                next_agent = None
         if next_agent:
             agent_reasoning["orchestrator"] = f"[LLM] → {next_agent}"
             agent_trace.append(f"[LLM] orchestrator → {next_agent}")

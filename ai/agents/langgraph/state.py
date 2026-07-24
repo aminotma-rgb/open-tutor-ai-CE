@@ -16,6 +16,7 @@ class TutorGraphState(TypedDict, total=False):
     language: str  # fr | en | ar
     learning_objectives: List[str]
     user_message: str
+    model: str  # LLM model chosen by the learner in the UI — threaded to every agent's call_llm()
 
     # ── From ContextManager (Phase 4) ────────────────────────────────────────
     rag_docs: List[Dict[str, Any]]
@@ -31,7 +32,9 @@ class TutorGraphState(TypedDict, total=False):
     blocked_concepts: List[Dict[str, Any]]  # {concept, attempts, mastery, last_error}
     prerequisite_gaps: List[str]  # unmastered prerequisites of blocked/weak concepts
     concept_levels: Dict[str, str]  # concept → "beginner"|"intermediate"|"advanced"
-    teaching_strategies_used: Dict[str, List[str]]  # concept → [strategies tried this session]
+    teaching_strategies_used: Dict[
+        str, List[str]
+    ]  # concept → [strategies tried this session]
     error_patterns: Dict[str, Dict]  # concept → {pattern, hypothesis, severity}
     adjusted_level: str
     difficulties: List[str]
@@ -54,5 +57,9 @@ class TutorGraphState(TypedDict, total=False):
 
     # ── Conversation & session tracking ───────────────────────────────────────
     messages: List[Dict[str, str]]  # [{role, content}] full conversation from frontend
-    answer_history: List[Dict[str, Any]]  # verdicts accumulated this session: [{correct, learner_answer, correct_answer, method, user_message}]
-    proposed_exercises_history: List[str]  # skill_targets already proposed — avoids in-session repetition
+    answer_history: List[
+        Dict[str, Any]
+    ]  # verdicts accumulated this session: [{correct, learner_answer, correct_answer, method, user_message}]
+    proposed_exercises_history: List[
+        str
+    ]  # skill_targets already proposed — avoids in-session repetition

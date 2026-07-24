@@ -1,11 +1,4 @@
-"""Harness LongMemEval-S — évalue la mémoire persistante (D1).
 
-Rejoue les sessions du haystack via build_graph(), puis pose la question finale
-et juge la réponse avec llm_judge (binaire correct/incorrect).
-
-Pré-requis : tests/eval/external/datasets/longmemeval_s_sample.json doit exister
-(généré par scripts/sample_longmemeval.py — Phase 2).
-"""
 
 from __future__ import annotations
 
@@ -65,6 +58,19 @@ def replay_haystack(instance: dict, graph) -> str:
                 # interrupt() pauses before _persist_memories() ever runs,
                 # so nothing from the haystack ever reaches the DB.
                 "human_feedback": "yes",
+                # Reset per-turn orchestrator state exactly as adaptive_chat()
+                # does for every HTTP request (see gateway/http/routers/adaptive.py).
+                # Without this, "iteration" is read back from the checkpointer and
+                # keeps climbing across the whole haystack replay (same thread_id
+                # for all sessions) instead of per turn — it trips orchestrator's
+                # MAX_ITERATIONS ceiling within the first session or two, after
+                # which every subsequent invoke (including the final question)
+                # silently no-ops: memory is never refreshed, feedback never
+                # persists, for the rest of the haystack.
+                "iteration": 0,
+                "n_retries": {},
+                "agent_trace": [],
+                "agent_reasoning": {},
             },
             config=config,
         )
@@ -76,22 +82,75 @@ def replay_haystack(instance: dict, graph) -> str:
             "user_message": instance["question"],
             "user_id": thread_id,
             "human_feedback": "yes",
+            "iteration": 0,
+            "n_retries": {},
+            "agent_trace": [],
+            "agent_reasoning": {},
         },
         config=config,
     )
 
     enriched_system = _build_enriched_system_prompt(final_state, is_first_message=False)
+    # Papier Figure 13 ("Current Date: {question_date}") : sans cette ancre, le LLM
+    # ne peut pas résoudre "le mois dernier"/"cette semaine" mentionnés dans la
+    # mémoire persistée par rapport à la date réelle de la question.
+    enriched_system = f"{enriched_system}\n\nCurrent Date: {instance['question_date']}"
     llm_messages = [{"role": "system", "content": enriched_system}] + question_turn
     return call_llm_with_messages(llm_messages, max_tokens=600) or ""
 
 
-def score_correctness(question: str, gold: str, generated: str, judge) -> bool:
+# Instructions de jugement par catégorie — traduction fidèle des 4 prompts de la
+# Figure 10 (Appendix A.4, Wu et al. 2025). Le papier ne juge jamais toutes les
+# catégories avec la même consigne ; en particulier temporal-reasoning tolère les
+# erreurs de ±1 jour, knowledge-update accepte l'ancienne info à côté de la mise à
+# jour, et single-session-preference évalue un rubric plutôt qu'une réponse fixe.
+_JUDGE_INSTRUCTIONS = {
+    "temporal-reasoning": (
+        'Réponds "yes" si la réponse générée contient la réponse correcte, "no" '
+        "sinon. Si la réponse est équivalente à la réponse correcte ou contient "
+        "toutes les étapes intermédiaires pour l'obtenir, réponds aussi \"yes\". Si "
+        "elle ne contient qu'une partie de l'information requise, réponds \"no\". Ne "
+        "pénalise PAS les erreurs de ±1 jour sur un nombre de jours/semaines/mois "
+        "(ex. prédire 19 jours quand la réponse attendue est 18 reste correct)."
+    ),
+    "knowledge-update": (
+        'Réponds "yes" si la réponse générée contient la réponse correcte, "no" '
+        "sinon. Si la réponse contient l'ancienne information en plus de la valeur "
+        "mise à jour, elle doit quand même être jugée correcte tant que la valeur "
+        "mise à jour attendue y figure."
+    ),
+    "single-session-preference": (
+        "RÉPONSE_ATTENDUE est un rubric décrivant la réponse personnalisée "
+        'souhaitée, pas une réponse factuelle fixe. Réponds "yes" si la réponse '
+        'générée satisfait ce rubric, "no" sinon. Le modèle n\'a pas besoin de '
+        "refléter tous les points du rubric — la réponse est correcte tant qu'elle "
+        "rappelle et utilise correctement l'information personnelle de l'utilisateur."
+    ),
+}
+_DEFAULT_JUDGE_INSTRUCTION = (
+    'Réponds "yes" si la réponse générée contient la réponse correcte, "no" sinon. '
+    "Si la réponse est équivalente à la réponse correcte ou contient toutes les "
+    "étapes intermédiaires pour l'obtenir, réponds aussi \"yes\". Si elle ne "
+    "contient qu'une partie de l'information requise, réponds \"no\"."
+)
+
+
+def score_correctness(
+    question: str, gold: str, generated: str, judge, question_type: str
+) -> bool:
+    """Juge correct/incorrect avec le prompt propre à la catégorie de la question
+    (voir _JUDGE_INSTRUCTIONS) — fidèle à la Figure 10 du papier plutôt qu'à un
+    prompt générique unique pour les 6 catégories.
+    """
+    instruction = _JUDGE_INSTRUCTIONS.get(question_type, _DEFAULT_JUDGE_INSTRUCTION)
+    gold_label = (
+        "RUBRIC_ATTENDU" if question_type == "single-session-preference" else "RÉPONSE_ATTENDUE"
+    )
     prompt = (
-        f"QUESTION: {question}\nRÉPONSE_ATTENDUE: {gold}\n"
+        f"QUESTION: {question}\n{gold_label}: {gold}\n"
         f"RÉPONSE_GÉNÉRÉE: {generated}\n\n"
-        "La réponse générée est-elle correcte par rapport à la réponse attendue "
-        '(même si formulée différemment) ? Réponds UNIQUEMENT en JSON : '
-        '{"verdict": "yes"|"no"}'
+        f"{instruction}\n"
+        'Réponds UNIQUEMENT en JSON : {"verdict": "yes"|"no"}'
     )
     result = judge(prompt)
     return bool(result and "yes" in result.lower())
@@ -120,7 +179,11 @@ def run_longmemeval(judge=None):
         for instance in sample:
             generated = replay_haystack(instance, graph)
             correct = score_correctness(
-                instance["question"], instance["answer"], generated, judge
+                instance["question"],
+                instance["answer"],
+                generated,
+                judge,
+                instance["question_type"],
             )
             results.append({
                 "question_id": instance["question_id"],

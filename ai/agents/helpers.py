@@ -86,7 +86,12 @@ def detect_difficulties(
         difficulties.append(f"Erreurs rencontrées en {support}")
     if any(
         kw in text
-        for kw in ("don't understand", "ne comprends pas", "je comprends pas", "je ne comprends pas")
+        for kw in (
+            "don't understand",
+            "ne comprends pas",
+            "je comprends pas",
+            "je ne comprends pas",
+        )
     ):
         difficulties.append(f"Difficulté de compréhension en {support}")
     if "why" in text or "pourquoi" in text:
@@ -323,7 +328,7 @@ def _self_critique(
         f"Cette sortie est-elle cohérente avec l'objectif pédagogique et le niveau ? "
         f"Réponds en une phrase : OK ou correction nécessaire."
     )
-    critique = call_llm(prompt, max_tokens=80)
+    critique = call_llm(prompt, model=state.get("model"), max_tokens=80)
     if critique:
         log.debug("Self-critique [%s]: %s", agent_name, critique[:100])
     return critique

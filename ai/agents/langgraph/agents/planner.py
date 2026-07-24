@@ -70,7 +70,13 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     from ai.llm.service import call_llm
 
     # Human feedback as pedagogical constraint
-    if human_feedback and human_feedback.lower().strip() not in ("oui", "yes", "y", "o", ""):
+    if human_feedback and human_feedback.lower().strip() not in (
+        "oui",
+        "yes",
+        "y",
+        "o",
+        "",
+    ):
         difficulties = list(difficulties) + [f"Human feedback : {human_feedback[:100]}"]
 
     # Deterministic baseline
@@ -84,7 +90,9 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     updated_strategies = dict(teaching_strategies_used)
 
     for concept in blocked_names[:3]:
-        forbidden = _forbidden_strategies(concept, teaching_strategies_used, memory_context)
+        forbidden = _forbidden_strategies(
+            concept, teaching_strategies_used, memory_context
+        )
         chosen = _pick_strategy(concept, forbidden)
         strategy_directives.append(
             f"Pour '{concept}' : utilise UNIQUEMENT '{chosen}' "
@@ -99,7 +107,8 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     rag_summary = " ".join(d.get("content", "")[:100] for d in rag_docs[:3])
     verification_note = (
         f"\nFeedback vérificateur (retry #{n_retries.get('planner', 0)}) : {verification_feedback}"
-        if verification_feedback else ""
+        if verification_feedback
+        else ""
     )
     blocked_note = ""
     if blocked_concepts:
@@ -115,15 +124,21 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             f"tout nouveau concept.\n"
         )
     strategy_rotation_note = (
-        "\nSTRATÉGIES IMPOSÉES PAR ROTATION :\n" + "\n".join(f"  - {d}" for d in strategy_directives)
-        if strategy_directives else ""
+        "\nSTRATÉGIES IMPOSÉES PAR ROTATION :\n"
+        + "\n".join(f"  - {d}" for d in strategy_directives)
+        if strategy_directives
+        else ""
     )
 
     prompt = (
         f"Génère un plan pédagogique personnalisé pour {first_name} : support={support}, niveau={adj_level}.\n"
         f"Difficultés de {first_name} : {difficulties}\n"
         f"Concepts faibles : {weak_concepts}\n"
-        + (f"Concepts bloqués (priorité maximale) : {blocked_names}\n" if blocked_names else "")
+        + (
+            f"Concepts bloqués (priorité maximale) : {blocked_names}\n"
+            if blocked_names
+            else ""
+        )
         + f"Objectifs : {objectives}\n"
         f"Sources RAG : {rag_summary[:300]}\n"
         f"{blocked_note}"
@@ -132,7 +147,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
         f"Génère 3-5 étapes d'apprentissage prioritaires, adaptées au profil de {first_name}.\n"
         f'Réponds en JSON : {{"decisions": [{{"id": 1, "action": "...", "rationale": "...", "priority": 1}}], "reasoning": "..."}}'
     )
-    llm_text = call_llm(prompt, max_tokens=400)
+    llm_text = call_llm(prompt, model=state.get("model"), max_tokens=400)
     strategy = "; ".join(d.get("action", "") for d in decisions)
 
     if llm_text:
@@ -144,9 +159,8 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             if llm_decisions:
                 decisions = llm_decisions
                 strategy = "; ".join(d.get("action", "") for d in decisions)
-            agent_reasoning["planner"] = (
-                f"[LLM] {data.get('reasoning', '')[:80]}"
-                + (f" | rotation: {strategy_directives}" if strategy_directives else "")
+            agent_reasoning["planner"] = f"[LLM] {data.get('reasoning', '')[:80]}" + (
+                f" | rotation: {strategy_directives}" if strategy_directives else ""
             )
         except Exception:
             agent_reasoning["planner"] = "[fallback] deterministic strategy"
@@ -158,7 +172,11 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     n_retries["planner"] = n_retries.get("planner", 0) + 1
     agent_trace.append(
         f"planner → {len(decisions)} decisions (retry #{n_retries['planner']})"
-        + (f" | rotation: {list(updated_strategies.keys())}" if strategy_directives else "")
+        + (
+            f" | rotation: {list(updated_strategies.keys())}"
+            if strategy_directives
+            else ""
+        )
     )
 
     return {

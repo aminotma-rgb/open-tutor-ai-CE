@@ -1,4 +1,4 @@
-"""Configuration pytest pour les tests externes (LongMemEval-S, MRBench).
+"""Configuration pytest pour les tests externes (LongMemEval-S, MRBench, LoCoMo).
 
 Ces tests font des appels LLM réels et écrivent dans des fichiers SQLite temporaires.
 Ils DOIVENT s'exécuter séquentiellement — ne jamais les lancer avec pytest-xdist (-n auto).

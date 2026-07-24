@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 
 def _verify_learner_answer(
-    user_message: str, rag_docs: list, question_context: str = ""
+    user_message: str, rag_docs: list, question_context: str = "", model: str = None
 ) -> Dict[str, Any]:
     """Verify the learner's answer using Python arithmetic, RAG, then web search.
 
@@ -24,9 +24,10 @@ def _verify_learner_answer(
 
     # Normalise operators
     normalised = (
-        user_message
-        .replace("×", "*").replace("÷", "/")
-        .replace("x", "*").replace("X", "*")
+        user_message.replace("×", "*")
+        .replace("÷", "/")
+        .replace("x", "*")
+        .replace("X", "*")
     )
 
     # ── Method 1 : Python arithmetic ──────────────────────────────────────────
@@ -46,7 +47,8 @@ def _verify_learner_answer(
         try:
             correct_val = eval(expression, {"__builtins__": {}})
             correct_rounded = (
-                int(correct_val) if correct_val == int(correct_val)
+                int(correct_val)
+                if correct_val == int(correct_val)
                 else round(correct_val, 4)
             )
             is_correct = abs(float(learner_str) - float(correct_rounded)) < 0.01
@@ -69,8 +71,14 @@ def _verify_learner_answer(
         try:
             from ai.llm.service import call_llm
 
-            corpus = " ".join(d.get("content", "") for d in rag_docs)[:600] if rag_docs else ""
-            rag_section = f"\nContenu du cours (référence) :\n{corpus}" if corpus else ""
+            corpus = (
+                " ".join(d.get("content", "") for d in rag_docs)[:600]
+                if rag_docs
+                else ""
+            )
+            rag_section = (
+                f"\nContenu du cours (référence) :\n{corpus}" if corpus else ""
+            )
 
             prompt = (
                 f"Tu es un correcteur pédagogique. Évalue la réponse de l'apprenant.\n\n"
@@ -83,7 +91,7 @@ def _verify_learner_answer(
                 f'"correct_answer": "réponse attendue ou vide si correct"}}'
             )
 
-            llm_text = call_llm(prompt, max_tokens=200)
+            llm_text = call_llm(prompt, model=model, max_tokens=200)
             if llm_text:
                 start = llm_text.find("{")
                 end = llm_text.rfind("}") + 1
@@ -158,7 +166,7 @@ def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
             f'{{"verdict": "supported|needs_review|no_sources", "score": 0.0, '
             f'"specific_feedback": ["..."], "unsupported_items": ["..."]}}'
         )
-        llm_text = call_llm(prompt, max_tokens=300)
+        llm_text = call_llm(prompt, model=state.get("model"), max_tokens=300)
 
         if llm_text:
             try:
@@ -186,7 +194,9 @@ def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── Learner answer verification ───────────────────────────────────────────
     user_message = state.get("user_message", "")
-    learner_answer_verdict = _verify_learner_answer(user_message, rag_docs, last_question)
+    learner_answer_verdict = _verify_learner_answer(
+        user_message, rag_docs, last_question, model=state.get("model")
+    )
     if learner_answer_verdict:
         method = learner_answer_verdict.get("method", "?")
         correct = learner_answer_verdict.get("correct")
@@ -195,10 +205,12 @@ def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
             f"— {learner_answer_verdict.get('explanation', '')[:80]}"
         )
         # Accumulate verdict into session answer history
-        answer_history = answer_history + [{
-            **learner_answer_verdict,
-            "user_message": user_message[:100],
-        }]
+        answer_history = answer_history + [
+            {
+                **learner_answer_verdict,
+                "user_message": user_message[:100],
+            }
+        ]
 
     agent_trace.append(
         f"verifier → verdict={verification.get('verdict')} "

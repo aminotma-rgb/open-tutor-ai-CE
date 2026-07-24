@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -243,14 +244,15 @@ def _persist_adjusted_level(
                 .all()
             )
             matches = [
-                m for m in all_behavioral
-                if m.memory_metadata.get("support") == support
+                m for m in all_behavioral if m.memory_metadata.get("support") == support
             ]
             content = f"Niveau évalué : {adjusted_level} pour '{support}'"
             if matches:
                 # Preserve previously identified difficulties if the current session found none
                 prev_difficulties = matches[0].memory_metadata.get("difficulties") or []
-                merged_difficulties = difficulties[:5] if difficulties else prev_difficulties
+                merged_difficulties = (
+                    difficulties[:5] if difficulties else prev_difficulties
+                )
             else:
                 merged_difficulties = difficulties[:5]
             metadata = {
@@ -284,21 +286,53 @@ def _persist_adjusted_level(
 
 # ── Validation phrases that falsely confirm a wrong answer ───────────────────
 _VALIDATION_PHRASES = (
-    "c'est correct", "c'est exact", "c'est juste", "exactement", "bravo",
-    "très bien", "parfait", "excellent", "bonne réponse", "bien joué",
-    "that's correct", "that's right", "exactly", "well done", "great job",
-    "good answer", "correct", "right answer",
+    "c'est correct",
+    "c'est exact",
+    "c'est juste",
+    "exactement",
+    "bravo",
+    "très bien",
+    "parfait",
+    "excellent",
+    "bonne réponse",
+    "bien joué",
+    "that's correct",
+    "that's right",
+    "exactly",
+    "well done",
+    "great job",
+    "good answer",
+    "correct",
+    "right answer",
 )
+
+
+def _answer_revealed(correct_answer: str, content: str) -> bool:
+    """True if `content` states `correct_answer` as the result of a calculation
+    or explicitly names it as "the answer" — not just any incidental mention
+    (e.g. a step number like "étape 3" must not match).
+    """
+    correct_answer = correct_answer.strip()
+    if not correct_answer:
+        return False
+    escaped = re.escape(correct_answer)
+    reveal_patterns = (
+        rf"=\s*{escaped}\b",  # end of an equation, e.g. "15 ÷ 5 = 3"
+        rf"\b(r[ée]ponse|r[ée]sultat|answer)\b[^.\n]{{0,25}}\b{escaped}\b",  # "la réponse est 3"
+        rf"\b{escaped}\b[^.\n]{{0,25}}\b(r[ée]ponse|r[ée]sultat|answer)\b",  # "3 est la bonne réponse"
+    )
+    return any(re.search(p, content, re.IGNORECASE) for p in reveal_patterns)
 
 
 def _check_tutor_response(content: str, state: dict) -> Optional[Dict[str, Any]]:
     """Detect rule violations in the tutor's generated response.
 
     Returns a violation dict {rule, detail} or None if the response is clean.
-    Checks three rules in priority order:
+    Checks rules in priority order:
       1. False validation — tutor praises a wrong answer
-      2. New concept while blocked — tutor ignores ABSOLUTE RULE
-      3. Off-topic — tutor ignores all known difficulties
+      2. Revealed answer — tutor states the correct answer instead of guiding
+      3. New concept while blocked — tutor ignores ABSOLUTE RULE
+      4. Off-topic — tutor ignores all known difficulties
     """
     if not content:
         return None
@@ -321,14 +355,26 @@ def _check_tutor_response(content: str, state: dict) -> Optional[Dict[str, Any]]
                     "learner_answer": verdict.get("learner_answer", ""),
                 }
 
-    # Rule 2 — new concept introduced while blocked concepts exist
+        # Rule 2 — revealed the correct answer instead of guiding the learner to it
+        correct_answer = str(verdict.get("correct_answer", ""))
+        if _answer_revealed(correct_answer, content):
+            return {
+                "rule": "revealed_answer",
+                "detail": (
+                    f"La réponse de l'apprenant était fausse et le tuteur a révélé "
+                    f"la réponse correcte ('{correct_answer}') au lieu de le guider."
+                ),
+                "correct_answer": correct_answer,
+                "learner_answer": verdict.get("learner_answer", ""),
+            }
+
+    # Rule 3 — new concept introduced while blocked concepts exist
     blocked_concepts = state.get("blocked_concepts") or []
     if blocked_concepts:
         blocked_names = {bc["concept"].lower() for bc in blocked_concepts}
-        known_concepts = (
-            set(state.get("weak_concepts") or [])
-            | {bc["concept"] for bc in blocked_concepts}
-        )
+        known_concepts = set(state.get("weak_concepts") or []) | {
+            bc["concept"] for bc in blocked_concepts
+        }
         # A simple heuristic: if the response is very long and doesn't mention
         # any blocked concept, flag it as potentially off-topic
         if len(content) > 200:
@@ -343,7 +389,7 @@ def _check_tutor_response(content: str, state: dict) -> Optional[Dict[str, Any]]
                     "blocked": [bc["concept"] for bc in blocked_concepts[:2]],
                 }
 
-    # Rule 3 — response completely ignores known difficulties
+    # Rule 4 — response completely ignores known difficulties
     difficulties = state.get("difficulties") or []
     if difficulties and len(content) > 300:
         diff_keywords = []
@@ -359,7 +405,7 @@ def _check_tutor_response(content: str, state: dict) -> Optional[Dict[str, Any]]
                 "difficulties": difficulties[:2],
             }
 
-    # Rule 4 — premature topic change while weak concepts / difficulties remain
+    # Rule 5 — premature topic change while weak concepts / difficulties remain
     weak_concepts = state.get("weak_concepts") or []
     if weak_concepts or difficulties:
         topic_change_phrases = (
@@ -376,10 +422,14 @@ def _check_tutor_response(content: str, state: dict) -> Optional[Dict[str, Any]]
             "veux-tu continuer avec autre",
         )
         if any(phrase in lower for phrase in topic_change_phrases):
-            pending = (
-                [bc["concept"] for bc in (state.get("blocked_concepts") or [])]
-                + [c for c in weak_concepts if c not in {bc["concept"] for bc in (state.get("blocked_concepts") or [])}]
-            )
+            pending = [
+                bc["concept"] for bc in (state.get("blocked_concepts") or [])
+            ] + [
+                c
+                for c in weak_concepts
+                if c
+                not in {bc["concept"] for bc in (state.get("blocked_concepts") or [])}
+            ]
             return {
                 "rule": "premature_topic_change",
                 "detail": (
@@ -417,6 +467,15 @@ def _fix_tutor_response(
             f"— la bonne réponse est '{violation.get('correct_answer')}'. "
             f"Tu DOIS signaler l'erreur clairement, expliquer pourquoi, donner la bonne réponse, "
             f"et NE PAS utiliser de formule de félicitation."
+        )
+    elif rule == "revealed_answer":
+        correction_directive = (
+            f"\n\nCORRECTION OBLIGATOIRE : Ta réponse précédente a révélé la réponse correcte "
+            f"('{violation.get('correct_answer')}') à l'apprenant après une erreur. "
+            f"Reformule SANS jamais écrire ce résultat final ni un calcul qui y mène directement. "
+            f"Signale l'erreur, explique précisément où le raisonnement de l'apprenant a dévié, "
+            f"puis donne un indice ou une question guidante pour qu'il trouve la réponse "
+            f"lui-même, et invite-le à réessayer."
         )
     elif rule == "ignores_blocked":
         blocked = violation.get("blocked", [])
@@ -478,8 +537,7 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
     concept_levels: Dict[str, str] = state.get("concept_levels") or {}
     if concept_levels:
         profile = ", ".join(
-            f"{concept} ({level})"
-            for concept, level in concept_levels.items()
+            f"{concept} ({level})" for concept, level in concept_levels.items()
         )
         parts.append(f"CONCEPT LEVEL PROFILE: {profile}")
 
@@ -488,7 +546,11 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
     if blocked_concepts:
         blocked_details = "; ".join(
             f"{bc['concept']} ({bc['attempts']} tentatives"
-            + (f", dernière erreur : {bc['last_error']}" if bc.get("last_error") else "")
+            + (
+                f", dernière erreur : {bc['last_error']}"
+                if bc.get("last_error")
+                else ""
+            )
             + ")"
             for bc in blocked_concepts[:3]
         )
@@ -504,7 +566,11 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
         )
         if is_first_message:
             bc0 = blocked_concepts[0]
-            last_err = f" La dernière fois, tu as répondu '{bc0['last_error']}'." if bc0.get("last_error") else ""
+            last_err = (
+                f" La dernière fois, tu as répondu '{bc0['last_error']}'."
+                if bc0.get("last_error")
+                else ""
+            )
             parts.append(
                 f"FIRST MESSAGE DIRECTIVE (BLOCKED): Open with warm acknowledgement that this concept "
                 f"has been difficult across {bc0['attempts']} sessions.{last_err} "
@@ -517,8 +583,7 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
     # Filter out blocked signals already shown above to avoid duplication
     blocked_names = {bc["concept"] for bc in blocked_concepts}
     non_blocked_difficulties = [
-        d for d in difficulties
-        if not any(name in d for name in blocked_names)
+        d for d in difficulties if not any(name in d for name in blocked_names)
     ]
     if non_blocked_difficulties:
         diff_labels = "; ".join(str(d) for d in non_blocked_difficulties[:5])
@@ -545,7 +610,9 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
     weak_concepts = state.get("weak_concepts") or []
     non_blocked_weak = [c for c in weak_concepts if c not in blocked_names]
     if non_blocked_weak:
-        parts.append(f"CONCEPTS TO REINFORCE: {', '.join(str(c) for c in non_blocked_weak[:5])}")
+        parts.append(
+            f"CONCEPTS TO REINFORCE: {', '.join(str(c) for c in non_blocked_weak[:5])}"
+        )
         parts.append(
             "MASTERY GATE — TOPIC CHANGE FORBIDDEN: The learner has NOT yet demonstrated "
             "sufficient mastery of the concepts listed above. "
@@ -557,7 +624,9 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
 
     memory_summary = state.get("memory_summary") or state.get("session_summary") or ""
     if memory_summary:
-        parts.append(f"KNOWN FACTS ABOUT THE LEARNER (use these to answer questions about their past): {memory_summary[:1200]}")
+        parts.append(
+            f"KNOWN FACTS ABOUT THE LEARNER (use these to answer questions about their past): {memory_summary[:1200]}"
+        )
 
     decisions = state.get("strategy_decisions") or []
     if decisions:
@@ -568,6 +637,15 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
         parts.append(f"TEACHING STRATEGY: {actions}")
 
     # ── Exercises generated by ExerciseAgent ─────────────────────────────────
+    # REVERTED 2026-07-12: omitting the answer here was tried as a fix for the
+    # revealing_of_answer MRBench axis (0.225 → 0.20 with the ANSWER
+    # VERIFICATION fix alone, no change). Measured on the same dialogues
+    # before/after, this specific change made it WORSE (2 dialogues that
+    # didn't reveal the answer started revealing it: 1.0 → 0.0). Root cause
+    # not understood yet (hypothesis: the LLM re-derives and states the
+    # answer itself while reasoning through the problem without one given).
+    # Reverted pending investigation with captured response text — see
+    # docs/evaluation.md revealing_of_answer section.
     exercises = state.get("exercises") or []
     if exercises:
         ex_lines = []
@@ -606,10 +684,13 @@ def _build_enriched_system_prompt(state: dict, is_first_message: bool = False) -
         elif correct is False:
             parts.append(
                 f"ANSWER VERIFICATION [{method}]: The learner's answer '{learner_ans}' is WRONG. "
-                f"Correct answer: {correct_ans}. {explanation}. "
+                f"{explanation}. "
                 f"CRITICAL: Do NOT say 'correct', 'exactement', 'bravo' or any validating phrase. "
-                f"Gently tell the learner their answer is incorrect, explain why, "
-                f"give the correct answer ({correct_ans}), and invite them to try again."
+                f"Do NOT reveal the correct answer ({correct_ans}) directly — the learner must "
+                f"find it themselves. Instead: gently tell them their answer is incorrect, point "
+                f"to specifically where their reasoning went wrong (without stating the final "
+                f"result), give a hint or a guiding question that leads them toward it, and "
+                f"invite them to try again."
             )
         elif correct is None and explanation:
             parts.append(
@@ -643,7 +724,9 @@ def _llm_conversational_response(
     """
     import httpx
 
-    llm_messages: List[Dict[str, str]] = [{"role": "system", "content": enriched_system}]
+    llm_messages: List[Dict[str, str]] = [
+        {"role": "system", "content": enriched_system}
+    ]
     for m in messages:
         if m.role in ("user", "assistant"):
             llm_messages.append({"role": m.role, "content": m.content})
@@ -655,7 +738,12 @@ def _llm_conversational_response(
         resp = httpx.post(
             url,
             headers=headers,
-            json={"model": model, "messages": llm_messages, "stream": False, "max_tokens": 1200},
+            json={
+                "model": model,
+                "messages": llm_messages,
+                "stream": False,
+                "max_tokens": 1200,
+            },
             timeout=120.0,
         )
         resp.raise_for_status()
@@ -730,6 +818,9 @@ async def adaptive_chat(
         "language": body.language,
         "learning_objectives": body.learning_objectives,
         "user_message": user_message,
+        # UI-selected model — threaded into every agent's call_llm() so the learner's
+        # choice drives the whole pipeline, not just the final conversational reply
+        "model": body.model,
         # Full conversation history — agents use this to see the exchange, not just the last message
         "messages": [{"role": m.role, "content": m.content} for m in body.messages],
         "rag_docs": rag_docs,
@@ -779,11 +870,15 @@ async def adaptive_chat(
     is_first_message = not any(m.role == "assistant" for m in body.messages)
 
     # Build enriched system prompt from agent output + support context
-    enriched_system = _build_enriched_system_prompt(final_state, is_first_message=is_first_message)
+    enriched_system = _build_enriched_system_prompt(
+        final_state, is_first_message=is_first_message
+    )
 
     # Resolve the LLM provider configured in the UI (same as /api/chat/completions)
     try:
-        base_url, api_key, llm_path = await ProvidersService(db).resolve_provider(body.model)
+        base_url, api_key, llm_path = await ProvidersService(db).resolve_provider(
+            body.model
+        )
     except Exception as exc:
         log.warning("Provider resolution failed for model '%s': %s", body.model, exc)
         # Fallback: try first available Ollama URL from config
@@ -792,7 +887,11 @@ async def adaptive_chat(
             ol_cfg = _svc.config.get_ollama()
             urls = ol_cfg.get("OLLAMA_BASE_URLS") or []
             if urls:
-                base_url, api_key, llm_path = urls[0].rstrip("/"), "", "v1/chat/completions"
+                base_url, api_key, llm_path = (
+                    urls[0].rstrip("/"),
+                    "",
+                    "v1/chat/completions",
+                )
             else:
                 raise RuntimeError("No Ollama URLs configured")
         except Exception as fallback_exc:
@@ -816,12 +915,22 @@ async def adaptive_chat(
     # Post-generation verification — fix rule violations before sending to learner
     violation = _check_tutor_response(content, final_state)
     if violation:
-        log.warning("Tutor response violation detected: rule=%s — %s", violation["rule"], violation["detail"])
+        log.warning(
+            "Tutor response violation detected: rule=%s — %s",
+            violation["rule"],
+            violation["detail"],
+        )
         content = await asyncio.to_thread(
             _fix_tutor_response,
-            content, violation, final_state,
-            enriched_system, body.messages,
-            base_url, api_key, llm_path, body.model,
+            content,
+            violation,
+            final_state,
+            enriched_system,
+            body.messages,
+            base_url,
+            api_key,
+            llm_path,
+            body.model,
         )
 
     if not body.stream:
